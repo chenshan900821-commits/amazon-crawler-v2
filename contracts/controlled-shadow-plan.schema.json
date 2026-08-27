@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amazon-crawler-v2.local/contracts/controlled-shadow-plan.schema.json",
+  "title": "Amazon Crawler V2 controlled shadow plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "authorization_reference",
+    "environment",
+    "check_receipts",
+    "scenarios"
+  ],
+  "properties": {
+    "schema_version": {"const": "controlled-shadow-plan.v1"},
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 200},
+    "authorization_reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "environment": {"const": "isolated"},
+    "check_receipts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "checkpoint_recovery",
+        "cookie_proxy_redaction",
+        "legacy_bridge_roundtrip"
+      ],
+      "properties": {
+        "checkpoint_recovery": {
+          "$ref": "#/$defs/checkpointRecoveryReceipt"
+        },
+        "cookie_proxy_redaction": {
+          "$ref": "#/$defs/cookieProxyRedactionReceipt"
+        },
+        "legacy_bridge_roundtrip": {
+          "$ref": "#/$defs/legacyBridgeRoundtripReceipt"
+        }
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 33,
+      "maxItems": 33,
+      "items": {"$ref": "#/$defs/scenario"}
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "baseReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "check",
+        "status",
+        "environment",
+        "run_id",
+        "authorization_reference",
+        "validated_at",
+        "artifact_sha256"
+      ],
+      "properties": {
+        "schema_version": {"const": "controlled-check-receipt.v1"},
+        "check": {"type": "string"},
+        "status": {"const": "passed"},
+        "environment": {"const": "isolated"},
+        "run_id": {"type": "string", "minLength": 1},
+        "authorization_reference": {"type": "string", "minLength": 1},
+        "validated_at": {"type": "string", "format": "date-time"},
+        "artifact_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "checkpointRecoveryReceipt": {
+      "allOf": [
+        {"$ref": "#/$defs/baseReceipt"},
+        {
+          "properties": {
+            "check": {"const": "checkpoint_recovery"}
+          }
+        }
+      ]
+    },
+    "cookieProxyRedactionReceipt": {
+      "allOf": [
+        {"$ref": "#/$defs/baseReceipt"},
+        {
+          "properties": {
+            "check": {"const": "cookie_proxy_redaction"}
+          }
+        }
+      ]
+    },
+    "legacyBridgeRoundtripReceipt": {
+      "allOf": [
+        {"$ref": "#/$defs/baseReceipt"},
+        {
+          "properties": {
+            "check": {"const": "legacy_bridge_roundtrip"}
+          }
+        }
+      ]
+    },
+    "projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result_rows",
+        "dimension_rows",
+        "child_task_rows",
+        "product_task_rows"
+      ],
+      "properties": {
+        "result_rows": {
+          "type": "array",
+          "items": {"type": "object"}
+        },
+        "dimension_rows": {
+          "type": "array",
+          "items": {"type": "object"}
+        },
+        "child_task_rows": {
+          "type": "array",
+          "items": {"type": "object"}
+        },
+        "product_task_rows": {
+          "type": "array",
+          "items": {"type": "object"}
+        }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "case",
+        "authorized",
+        "marketplace_id",
+        "postal_code",
+        "input",
+        "legacy"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "search",
+            "search_hour",
+            "product",
+            "product_hw",
+            "product_time",
+            "reviews",
+            "merchant",
+            "merchant_home",
+            "merchant_products",
+            "category_asin_list",
+            "rank_list"
+          ]
+        },
+        "case": {"enum": ["success", "no_result", "throttle"]},
+        "authorized": {"const": true},
+        "marketplace_id": {"type": "string", "minLength": 1},
+        "postal_code": {"type": "string", "minLength": 1},
+        "input": {"type": "object", "minProperties": 1},
+        "legacy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "projection"],
+          "properties": {
+            "state": {"type": "integer"},
+            "projection": {"$ref": "#/$defs/projection"}
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,311 @@
+{
+  "schema_version": "legacy-parity.v1",
+  "overall_status": "in_progress",
+  "completion_rule": "A task is complete only when implementation, contract tests, offline replay, checkpoint recovery, migration mapping, and controlled integration evidence are all present and passing.",
+  "security_invariants": [
+    "cookie values are never persisted in task or result storage",
+    "proxy credentials are never persisted in task or result storage",
+    "secrets are never emitted through logs, UI, API, evidence, or Agent output",
+    "blocked pages are detected and reported; CAPTCHA solving is out of scope"
+  ],
+  "shared_capabilities": [
+    {
+      "name": "cookie_provider_routing",
+      "current_status": "verified",
+      "evidence": [
+        {"type": "implementation", "path": "src/amazon_crawler/infra/resources.py", "passing": true},
+        {"type": "test", "path": "tests/test_resources.py", "passing": true},
+        {"type": "legacy_platform_source_audit", "path": "tests/test_legacy_platform_audit.py", "passing": true}
+      ]
+    },
+    {
+      "name": "cookie_production_scheduler",
+      "current_status": "verified",
+      "evidence": [
+        {"type": "implementation", "path": "src/amazon_crawler/infra/cookie_harvester.py", "passing": true},
+        {"type": "implementation", "path": "src/amazon_crawler/application/cookie_maintenance.py", "passing": true},
+        {"type": "test", "path": "tests/test_cookie_harvester.py", "passing": true},
+        {"type": "test", "path": "tests/test_cookie_maintenance.py", "passing": true},
+        {"type": "legacy_platform_source_audit", "path": "tests/test_legacy_platform_audit.py", "passing": true}
+      ]
+    },
+    {
+      "name": "proxy_tls_fingerprint",
+      "current_status": "verified",
+      "evidence": [
+        {"type": "implementation", "path": "src/amazon_crawler/infra/http.py", "passing": true},
+        {"type": "implementation", "path": "src/amazon_crawler/infra/resources.py", "passing": true},
+        {"type": "test", "path": "tests/test_http_transport.py", "passing": true},
+        {"type": "test", "path": "tests/test_resources.py", "passing": true},
+        {"type": "legacy_platform_source_audit", "path": "tests/test_legacy_platform_audit.py", "passing": true}
+      ]
+    },
+    {
+      "name": "durable_control_plane",
+      "current_status": "verified",
+      "evidence": [
+        {"type": "implementation", "path": "src/amazon_crawler/infra/sqlite_store.py", "passing": true},
+        {"type": "implementation", "path": "src/amazon_crawler/application/worker.py", "passing": true},
+        {"type": "test", "path": "tests/test_checkpoint_resume.py", "passing": true},
+        {"type": "legacy_platform_source_audit", "path": "tests/test_legacy_platform_audit.py", "passing": true}
+      ]
+    },
+    {
+      "name": "legacy_mysql_redis_bridge",
+      "current_status": "verified",
+      "evidence": [
+        {"type": "implementation", "path": "src/amazon_crawler/infra/legacy_compat.py", "passing": true},
+        {"type": "test", "path": "tests/test_legacy_compat.py", "passing": true},
+        {"type": "test", "path": "tests/test_result_sinks.py", "passing": true},
+        {"type": "legacy_platform_source_audit", "path": "tests/test_legacy_platform_audit.py", "passing": true}
+      ]
+    },
+    {
+      "name": "multi_result_storage",
+      "current_status": "verified",
+      "evidence": [
+        {"type": "implementation", "path": "src/amazon_crawler/infra/result_sinks.py", "passing": true},
+        {"type": "implementation", "path": "src/amazon_crawler/application/delivery_worker.py", "passing": true},
+        {"type": "test", "path": "tests/test_result_sinks.py", "passing": true},
+        {"type": "legacy_platform_source_audit", "path": "tests/test_legacy_platform_audit.py", "passing": true}
+      ]
+    },
+    {
+      "name": "api_management_ui",
+      "current_status": "verified",
+      "evidence": [
+        {"type": "implementation", "path": "src/amazon_crawler/interfaces/api.py", "passing": true},
+        {"type": "implementation", "path": "src/amazon_crawler/interfaces/static/index.html", "passing": true},
+        {"type": "implementation", "path": "src/amazon_crawler/interfaces/static/app.js", "passing": true},
+        {"type": "test", "path": "tests/test_api.py", "passing": true},
+        {"type": "legacy_platform_source_audit", "path": "tests/test_legacy_platform_audit.py", "passing": true}
+      ]
+    },
+    {
+      "name": "agent_skill_boundary",
+      "current_status": "verified",
+      "evidence": [
+        {"type": "implementation", "path": "skills/operate-amazon-crawler/SKILL.md", "passing": true},
+        {"type": "implementation", "path": "skills/operate-amazon-crawler/scripts/crawler_cli.py", "passing": true},
+        {"type": "test", "path": "tests/test_agent_skill.py", "passing": true}
+      ]
+    },
+    {
+      "name": "secret_boundary",
+      "current_status": "verified",
+      "evidence": [
+        {"type": "implementation", "path": "src/amazon_crawler/domain/resources.py", "passing": true},
+        {"type": "implementation", "path": "src/amazon_crawler/infra/evidence.py", "passing": true},
+        {"type": "test", "path": "tests/test_secret_boundaries.py", "passing": true},
+        {"type": "test", "path": "tests/test_evidence.py", "passing": true}
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "kind": "search",
+      "legacy_task_name": "search_jp",
+      "legacy_task_table": "amazon_search_product_jp_task_boost",
+      "legacy_result_table": "amazon_search_product",
+      "inputs": ["id", "keyword", "market_id", "post_code", "turn_page", "frequent"],
+      "results": ["brand", "coupon_info", "crawl_date", "data_asin", "delivery_information", "frequent", "is_sponsored", "keyword", "link", "main_img_url", "market_id", "number_of_sub_asin", "page", "post_code", "reviews_ratings", "reviews_stars", "sales_volume", "scribing_price", "search_rank", "selling_price", "small_business", "task_date", "title", "deal_badge"],
+      "pagination": "one durable item per legacy turn_page; completed page tasks must not be emitted twice",
+      "resources": ["cookie", "proxy", "fingerprint"],
+      "current_status": "offline_verified",
+      "evidence": [
+        {"type": "legacy_source_audit", "path": "scripts/audit_legacy_source_contracts.py", "passing": true},
+        {"type": "contract_test", "path": "tests/test_collection_parser.py", "passing": true},
+        {"type": "snapshot_replay", "path": "scripts/audit_legacy_collection_snapshots.py", "passing": true},
+        {"type": "offline_replay", "path": "tests/test_plugin_contracts.py", "passing": true},
+        {"type": "checkpoint_recovery_test", "path": "tests/test_checkpoint_resume.py", "passing": true},
+        {"type": "migration_mapping_test", "path": "tests/test_legacy_compat.py", "passing": true}
+      ]
+    },
+    {
+      "kind": "search_hour",
+      "legacy_task_name": "search_hour_jp",
+      "legacy_task_table": "amazon_search_product_task_hour",
+      "legacy_result_table": "amazon_search_product",
+      "inputs": ["id", "keyword", "market_id", "post_code", "turn_page", "frequent", "data_hour"],
+      "results": ["brand", "coupon_info", "crawl_date", "data_asin", "data_hour", "delivery_information", "frequent", "is_sponsored", "keyword", "link", "main_img_url", "market_id", "number_of_sub_asin", "page", "post_code", "reviews_ratings", "reviews_stars", "sales_volume", "scribing_price", "search_rank", "selling_price", "small_business", "task_date", "title"],
+      "pagination": "one durable item per legacy turn_page while preserving data_hour",
+      "resources": ["cookie", "proxy", "fingerprint"],
+      "current_status": "offline_verified",
+      "evidence": [
+        {"type": "legacy_source_audit", "path": "scripts/audit_legacy_source_contracts.py", "passing": true},
+        {"type": "contract_test", "path": "tests/test_collection_parser.py", "passing": true},
+        {"type": "snapshot_replay", "path": "scripts/audit_legacy_collection_snapshots.py", "passing": true},
+        {"type": "offline_replay", "path": "tests/test_plugin_contracts.py", "passing": true},
+        {"type": "checkpoint_recovery_test", "path": "tests/test_checkpoint_resume.py", "passing": true},
+        {"type": "migration_mapping_test", "path": "tests/test_legacy_compat.py", "passing": true}
+      ]
+    },
+    {
+      "kind": "product",
+      "legacy_task_name": "product_jp",
+      "legacy_task_table": "amazon_product_details_jp_task_boost",
+      "legacy_result_table": "amazon_product_details",
+      "inputs": ["id", "market_id", "asin", "post_code", "add_date"],
+      "results": ["a_plus", "amazon_choice", "amazon_choice_keyword", "asin", "best_seller_flag", "bought", "bought_time_unit", "brand", "breadcrumbs_feature", "breadcrumbs_feature_ids", "bsr", "bullet_points", "buy_box_owner", "buy_box_seller_id", "buy_box_type", "city", "coupons", "created_at", "deal_badge", "deal_end_time", "delivery_info", "extra_saving", "fba", "fbt", "first_page_review_imgs", "generate_date", "img", "imgs", "inventory_num", "is_video", "last_price", "lighting_deal_claimed", "link", "marketplace_id", "offsale", "pasin", "price", "prime_price", "product_description", "product_details", "product_info", "rating_num", "redirect_to", "review_insight_label", "review_summary", "score", "seller_num", "ships_from", "sku_num", "skus", "star_percent", "task_id", "title", "used", "zipcode"],
+      "secondary_results": {"amazon_dimensions_detail": ["asin", "created_at", "dimensions", "image_url", "market_place_id", "parent_asin", "task_id"]},
+      "pagination": "single item; product and dimension writes share one idempotent completion boundary",
+      "resources": ["cookie", "proxy", "fingerprint"],
+      "current_status": "offline_verified",
+      "evidence": [
+        {"type": "legacy_source_audit", "path": "scripts/audit_legacy_source_contracts.py", "passing": true},
+        {"type": "contract_test", "path": "tests/test_parser.py", "passing": true},
+        {"type": "snapshot_replay", "path": "scripts/audit_legacy_product_snapshots.py", "passing": true},
+        {"type": "offline_replay", "path": "tests/test_plugin_contracts.py", "passing": true},
+        {"type": "checkpoint_recovery_test", "path": "tests/test_checkpoint_resume.py", "passing": true},
+        {"type": "migration_mapping_test", "path": "tests/test_legacy_compat.py", "passing": true}
+      ]
+    },
+    {
+      "kind": "product_hw",
+      "legacy_task_name": "product_hw_jp",
+      "legacy_task_table": "amazon_product_details_jp_task_boost_hw",
+      "legacy_result_table": "amazon_product_details",
+      "inputs": ["id", "market_id", "asin", "post_code", "add_date"],
+      "results_contract": "same as product",
+      "pagination": "single item; hardware worker route must preserve product and dimension contracts",
+      "resources": ["cookie", "proxy", "fingerprint"],
+      "current_status": "offline_verified",
+      "evidence": [
+        {"type": "legacy_source_audit", "path": "scripts/audit_legacy_source_contracts.py", "passing": true},
+        {"type": "contract_test", "path": "tests/test_parser.py", "passing": true},
+        {"type": "offline_replay", "path": "tests/test_plugin_contracts.py", "passing": true},
+        {"type": "checkpoint_recovery_test", "path": "tests/test_checkpoint_resume.py", "passing": true},
+        {"type": "migration_mapping_test", "path": "tests/test_legacy_compat.py", "passing": true}
+      ]
+    },
+    {
+      "kind": "product_time",
+      "legacy_task_name": "product_time_jp",
+      "legacy_task_table": "amazon_product_details_time_task",
+      "legacy_result_table": "amazon_product_details_time",
+      "inputs": ["id", "market_id", "asin", "post_code", "add_date"],
+      "results_contract": "time-series projection of product fields; an un-timestamped request creates a new observation while add_date or an explicit retry key scopes idempotency",
+      "pagination": "single realtime observation; retries cannot create duplicate observations",
+      "resources": ["cookie", "proxy", "fingerprint"],
+      "current_status": "offline_verified",
+      "evidence": [
+        {"type": "legacy_source_audit", "path": "scripts/audit_legacy_source_contracts.py", "passing": true},
+        {"type": "contract_test", "path": "tests/test_parser.py", "passing": true},
+        {"type": "offline_replay", "path": "tests/test_plugin_contracts.py", "passing": true},
+        {"type": "checkpoint_recovery_test", "path": "tests/test_checkpoint_resume.py", "passing": true},
+        {"type": "migration_mapping_test", "path": "tests/test_legacy_compat.py", "passing": true}
+      ]
+    },
+    {
+      "kind": "reviews",
+      "legacy_task_name": "reviews",
+      "legacy_task_table": "amazon_reviews_task",
+      "legacy_result_table": "amazon_reviews",
+      "inputs": ["id", "market_id", "asin", "post_code", "add_date"],
+      "results": ["market_id", "asin", "review_title", "review_text", "imgs", "review_stars", "review_date", "attributes", "video", "crawl_date", "task_date"],
+      "pagination": "legacy behavior parses every review container on one product detail response without adding a new de-duplication rule",
+      "resources": ["cookie", "proxy", "fingerprint"],
+      "current_status": "offline_verified",
+      "evidence": [
+        {"type": "legacy_source_audit", "path": "scripts/audit_legacy_source_contracts.py", "passing": true},
+        {"type": "contract_test", "path": "tests/test_collection_parser.py", "passing": true},
+        {"type": "offline_replay", "path": "tests/test_plugin_contracts.py", "passing": true},
+        {"type": "checkpoint_recovery_test", "path": "tests/test_checkpoint_resume.py", "passing": true},
+        {"type": "migration_mapping_test", "path": "tests/test_legacy_compat.py", "passing": true}
+      ]
+    },
+    {
+      "kind": "merchant",
+      "legacy_task_name": "merchant",
+      "legacy_task_table": "amazon_merchant_detail_task_boost",
+      "legacy_result_table": "amazon_merchant_detail",
+      "inputs": ["id", "market_id", "seller_id"],
+      "results": ["seller_id", "market_id", "seller_name", "url", "business_name", "business_address", "crawl_date"],
+      "pagination": "single seller profile",
+      "resources": ["cookie", "proxy", "fingerprint"],
+      "current_status": "offline_verified",
+      "evidence": [
+        {"type": "legacy_source_audit", "path": "scripts/audit_legacy_source_contracts.py", "passing": true},
+        {"type": "contract_test", "path": "tests/test_merchant_parser.py", "passing": true},
+        {"type": "offline_replay", "path": "tests/test_plugin_contracts.py", "passing": true},
+        {"type": "checkpoint_recovery_test", "path": "tests/test_checkpoint_resume.py", "passing": true},
+        {"type": "migration_mapping_test", "path": "tests/test_legacy_compat.py", "passing": true}
+      ]
+    },
+    {
+      "kind": "merchant_home",
+      "legacy_task_name": "merchant_home",
+      "legacy_task_table": "amazon_merchant_products_origin_task",
+      "legacy_result_table": "amazon_merchant_products_task",
+      "inputs": ["id", "seller_id", "market_id", "post_code", "add_date", "object_url"],
+      "results": ["market_id", "seller_id", "page", "post_code", "add_date", "state", "source_task_id"],
+      "pagination": "discover product pages and emit idempotent merchant_products child tasks",
+      "resources": ["cookie", "proxy", "fingerprint"],
+      "current_status": "offline_verified",
+      "evidence": [
+        {"type": "legacy_source_audit", "path": "scripts/audit_legacy_source_contracts.py", "passing": true},
+        {"type": "contract_test", "path": "tests/test_merchant_parser.py", "passing": true},
+        {"type": "snapshot_replay", "path": "scripts/audit_legacy_merchant_snapshots.py", "passing": true},
+        {"type": "offline_replay", "path": "tests/test_plugin_contracts.py", "passing": true},
+        {"type": "checkpoint_recovery_test", "path": "tests/test_checkpoint_resume.py", "passing": true},
+        {"type": "migration_mapping_test", "path": "tests/test_legacy_compat.py", "passing": true}
+      ]
+    },
+    {
+      "kind": "merchant_products",
+      "legacy_task_name": "merchant_products",
+      "legacy_task_table": "amazon_merchant_products_task",
+      "legacy_result_table": "amazon_merchant_products",
+      "inputs": ["id", "source_task_id", "seller_id", "market_id", "post_code", "page", "add_date"],
+      "results": ["market_id", "seller_id", "data_asin", "page", "product_rank", "title", "link", "main_img_url", "reviews_stars", "reviews_ratings", "coupon_info", "scribing_price", "selling_price", "sales_volume", "delivery_information", "crawl_date", "task_date", "deal_badge", "number_of_sub_asin"],
+      "pagination": "one persisted page checkpoint per child task; product rows are idempotent within seller/page",
+      "resources": ["cookie", "proxy", "fingerprint"],
+      "current_status": "offline_verified",
+      "evidence": [
+        {"type": "legacy_source_audit", "path": "scripts/audit_legacy_source_contracts.py", "passing": true},
+        {"type": "contract_test", "path": "tests/test_merchant_parser.py", "passing": true},
+        {"type": "offline_replay", "path": "tests/test_plugin_contracts.py", "passing": true},
+        {"type": "checkpoint_recovery_test", "path": "tests/test_checkpoint_resume.py", "passing": true},
+        {"type": "migration_mapping_test", "path": "tests/test_legacy_compat.py", "passing": true}
+      ]
+    },
+    {
+      "kind": "category_asin_list",
+      "legacy_task_name": "asin_list_jp",
+      "legacy_task_table": "amazon_category_asin_list_task",
+      "legacy_result_table": "amazon_category_asin_list",
+      "inputs": ["id", "category_id", "market_id", "post_code", "page"],
+      "results": ["data_asin", "market_id", "post_code", "category_id", "title", "reviews_stars", "reviews_ratings", "sales_volume", "search_rank", "page", "selling_price", "scribing_price", "delivery_information", "main_img_url", "link", "coupon_info", "brand", "number_of_sub_asin", "is_sponsored", "small_business", "crawl_date", "task_date"],
+      "pagination": "persist category/page cursor and de-duplicate ASIN rows per category/page",
+      "resources": ["cookie", "proxy", "fingerprint"],
+      "current_status": "offline_verified",
+      "evidence": [
+        {"type": "legacy_source_audit", "path": "scripts/audit_legacy_source_contracts.py", "passing": true},
+        {"type": "contract_test", "path": "tests/test_collection_parser.py", "passing": true},
+        {"type": "snapshot_replay", "path": "scripts/audit_legacy_collection_snapshots.py", "passing": true},
+        {"type": "offline_replay", "path": "tests/test_plugin_contracts.py", "passing": true},
+        {"type": "checkpoint_recovery_test", "path": "tests/test_checkpoint_resume.py", "passing": true},
+        {"type": "migration_mapping_test", "path": "tests/test_legacy_compat.py", "passing": true}
+      ]
+    },
+    {
+      "kind": "rank_list",
+      "legacy_task_name": "rank_list_jp",
+      "legacy_task_table": "amazon_rank_list_product_jp_task_boost",
+      "legacy_result_table": "amazon_rank_list_product",
+      "inputs": ["id", "url", "market_id", "url_type", "category_id", "page"],
+      "results": ["list_type", "category_name", "market_place_id", "category_id", "asin", "main_image_url", "href", "title", "reviews_stars", "reviews_ratings", "selling_price", "created_at", "ranking"],
+      "pagination": "persist list/page cursor and keep ranking stable for one captured page",
+      "resources": ["cookie", "proxy", "fingerprint"],
+      "current_status": "offline_verified",
+      "evidence": [
+        {"type": "legacy_source_audit", "path": "scripts/audit_legacy_source_contracts.py", "passing": true},
+        {"type": "contract_test", "path": "tests/test_collection_parser.py", "passing": true},
+        {"type": "snapshot_replay", "path": "scripts/audit_legacy_collection_snapshots.py", "passing": true},
+        {"type": "offline_replay", "path": "tests/test_plugin_contracts.py", "passing": true},
+        {"type": "checkpoint_recovery_test", "path": "tests/test_checkpoint_resume.py", "passing": true},
+        {"type": "migration_mapping_test", "path": "tests/test_legacy_compat.py", "passing": true}
+      ]
+    }
+  ]
+}

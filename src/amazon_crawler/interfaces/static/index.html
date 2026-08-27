@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Amazon Crawler Control Plane</title>
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="noise"></div>
+    <header class="topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark"><i></i><i></i><i></i></span>
+        <span><b>CRAWLER</b><small>CONTROL PLANE · V2</small></span>
+      </a>
+      <div class="system-state"><span class="pulse"></span><span id="healthText">正在连接内核</span></div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">RESUMABLE · EVIDENCE-LED · AGENT-READY</p>
+          <h1>让每一次采集都<br /><em>可暂停、可恢复、可解释</em></h1>
+          <p class="hero-copy">统一管理 Amazon 商品采集任务。系统会保留逐项断点、重试证据与解析质量，为人工操作和 AI Agent 提供同一套安全控制面。</p>
+        </div>
+        <div class="orbit" aria-hidden="true">
+          <div class="orbit-ring ring-a"></div><div class="orbit-ring ring-b"></div>
+          <div class="core"><span id="activeCount">0</span><small>ACTIVE</small></div>
+          <span class="node node-a"></span><span class="node node-b"></span><span class="node node-c"></span>
+        </div>
+      </section>
+
+      <section class="metrics" id="metrics">
+        <article><span>任务总数</span><strong id="metricJobs">—</strong><small>持久化任务</small></article>
+        <article><span>结果总数</span><strong id="metricResults">—</strong><small>幂等结果</small></article>
+        <article><span>字段覆盖</span><strong id="metricCoverage">—</strong><small>核心字段质量</small></article>
+        <article><span>健康 Cookie</span><strong id="metricCookies">—</strong><small>仅显示数量，不暴露内容</small></article>
+      </section>
+
+      <section class="workspace">
+        <aside class="composer panel">
+          <div class="panel-title"><span>新建采集任务</span><small>01 / MISSION</small></div>
+          <form id="createForm">
+            <div class="form-grid top-fields">
+              <div><label>任务类型</label><select id="kind">
+                <option value="product">商品详情</option>
+                <option value="product_hw">商品详情 · 独立通道</option>
+                <option value="product_time">商品实时观测</option>
+                <option value="search">关键词搜索</option>
+                <option value="search_hour">关键词小时快照</option>
+                <option value="reviews">商品评论</option>
+                <option value="category_asin_list">类目 ASIN</option>
+                <option value="rank_list">榜单</option>
+                <option value="merchant">商家资料</option>
+                <option value="merchant_home">商家商品发现</option>
+                <option value="merchant_products">商家商品列表</option>
+              </select></div>
+              <div><label>执行策略</label><select id="mode"><option value="standard">Standard · 标准</option><option value="overseas">Overseas · 海外</option><option value="realtime">Realtime · 实时优先</option></select></div>
+            </div>
+            <label id="inputLabel">ASIN 或 Amazon 商品链接</label>
+            <textarea id="inputs" rows="6" placeholder="每行一个，例如：&#10;B0XXXXXXXX&#10;https://www.amazon.com/dp/B0YYYYYYYY" required></textarea>
+            <p class="input-help" id="inputHelp">每行创建一个持久化采集项。</p>
+            <div class="form-grid">
+              <div><label>站点</label><select id="marketplace"><option value="">由链接识别</option></select></div>
+              <div><label>目标邮编</label><input id="postalCode" maxlength="32" placeholder="可选" /></div>
+              <div class="task-field" data-fields="page"><label>页码</label><input id="page" type="number" min="1" max="400" value="1" /></div>
+              <div class="task-field" data-fields="frequent"><label>频次标记</label><select id="frequent"><option value="0">0 · 常规</option><option value="1">1 · 高频</option></select></div>
+              <div class="task-field" data-fields="category"><label>类目 ID</label><input id="categoryId" maxlength="100" placeholder="必填" /></div>
+              <div class="task-field" data-fields="rankType"><label>榜单类型</label><select id="rankType"><option value="bestsellers">Bestsellers</option><option value="new-releases">New releases</option></select></div>
+              <div class="task-field" data-fields="sourceTask"><label>来源任务 ID</label><input id="sourceTaskId" maxlength="128" placeholder="可选" /></div>
+              <div class="task-field" data-fields="objectUrl"><label>指定商家 URL</label><input id="objectUrl" type="url" placeholder="可选，仅 Amazon HTTPS" /></div>
+              <div><label>最大尝试</label><input id="maxAttempts" type="number" min="1" max="20" placeholder="自动：普通 5 / 小时 11" /></div>
+            </div>
+            <fieldset class="sink-picker">
+              <legend>结果去向</legend>
+              <div id="resultSinkOptions">
+                <label class="sink-option"><input type="checkbox" value="sqlite" checked disabled /><span><b>任务主库</b><small>断点与结果原本，始终保留</small></span></label>
+              </div>
+              <p>可同时选择多个去向。外部存储故障不会丢失本地结果，系统会在后台重试。</p>
+            </fieldset>
+            <p class="form-note" id="formNote">相同参数会自动返回同一任务，不会重复创建；凭证和代理只能由部署环境注入。</p>
+            <button class="primary" type="submit"><span>创建任务</span><b>→</b></button>
+          </form>
+        </aside>
+
+        <section class="mission panel">
+          <div class="panel-title">
+            <span>任务编队</span><small>02 / LIVE QUEUE</small>
+            <button class="ghost" id="refreshButton">刷新</button>
+          </div>
+          <div class="filter-row">
+            <button class="filter active" data-status="">全部</button>
+            <button class="filter" data-status="running">执行中</button>
+            <button class="filter" data-status="paused">已暂停</button>
+            <button class="filter" data-status="succeeded">已完成</button>
+            <button class="filter" data-status="failed">失败</button>
+          </div>
+          <div class="job-list" id="jobList"><div class="empty">尚未创建任务</div></div>
+        </section>
+      </section>
+
+      <section class="evolution panel">
+        <div class="panel-title"><span>受控进化回路</span><small>03 / EVALUATION</small></div>
+        <div class="evolution-flow">
+          <div><b>01</b><strong>观察</strong><span>成功率、失败码、字段缺失、站点差异</span></div>
+          <i>→</i><div><b>02</b><strong>提出候选</strong><span>Agent 生成解析或调度变更建议</span></div>
+          <i>→</i><div><b>03</b><strong>离线回放</strong><span>固定证据集对比旧版与候选版本</span></div>
+          <i>→</i><div><b>04</b><strong>门禁发布</strong><span>指标达标且人工批准后才可晋级</span></div>
+        </div>
+      </section>
+    </main>
+
+    <div class="drawer-backdrop" id="drawerBackdrop"></div>
+    <aside class="drawer" id="drawer">
+      <button class="drawer-close" id="drawerClose">×</button>
+      <p class="eyebrow">MISSION DETAIL</p>
+      <h2 id="drawerTitle">任务详情</h2>
+      <div id="drawerBody"></div>
+    </aside>
+    <div class="toast" id="toast"></div>
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

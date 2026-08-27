@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amazon-crawler-v2.local/contracts/controlled-shadow-batch-plan.schema.json",
+  "title": "Amazon Crawler V2 incremental controlled shadow batch plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "batch_id",
+    "run_id",
+    "authorization_reference",
+    "environment",
+    "check_receipts",
+    "scenarios"
+  ],
+  "properties": {
+    "schema_version": {"const": "controlled-shadow-batch-plan.v1"},
+    "batch_id": {"type": "string", "minLength": 1, "maxLength": 200},
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 200},
+    "authorization_reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "environment": {"const": "isolated"},
+    "source_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "join_strategy", "task_identity_sha256", "result_identity_sha256"],
+      "properties": {
+        "source": {"enum": ["legacy_loopback_mysql", "current_legacy_source"]},
+        "join_strategy": {"enum": ["task_id", "asin_market_postal_latest", "same_response"]},
+        "task_identity_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "result_identity_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "legacy_source_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"source": {"const": "legacy_loopback_mysql"}}},
+          "then": {
+            "properties": {
+              "join_strategy": {"enum": ["task_id", "asin_market_postal_latest"]}
+            },
+            "not": {"required": ["legacy_source_sha256"]}
+          }
+        },
+        {
+          "if": {"properties": {"source": {"const": "current_legacy_source"}}},
+          "then": {
+            "properties": {"join_strategy": {"const": "same_response"}},
+            "required": ["legacy_source_sha256"]
+          }
+        }
+      ]
+    },
+    "check_receipts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "checkpoint_recovery",
+        "cookie_proxy_redaction",
+        "legacy_bridge_roundtrip"
+      ],
+      "properties": {
+        "checkpoint_recovery": {
+          "$ref": "controlled-shadow-plan.schema.json#/$defs/checkpointRecoveryReceipt"
+        },
+        "cookie_proxy_redaction": {
+          "$ref": "controlled-shadow-plan.schema.json#/$defs/cookieProxyRedactionReceipt"
+        },
+        "legacy_bridge_roundtrip": {
+          "$ref": "controlled-shadow-plan.schema.json#/$defs/legacyBridgeRoundtripReceipt"
+        }
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 33,
+      "items": {
+        "$ref": "controlled-shadow-plan.schema.json#/$defs/scenario"
+      }
+    }
+  }
+}
