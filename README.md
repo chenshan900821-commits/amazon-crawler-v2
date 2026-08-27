@@ -1,175 +1,399 @@
 # Amazon Crawler V2
 
-这是在全新目录中重构的 Amazon 爬虫，不修改旧 Spider、Publisher、Saver 或配置。V2 已迁移 11 类旧任务，并用统一的任务状态机承载断点、租约、幂等、暂停/恢复/取消、派生任务、事件证据、API、管理界面和 AI Agent Skill。
+面向 Amazon 数据采集场景的可恢复、可观测爬虫服务。项目提供管理界面、HTTP API、命令行和 Agent Skill，统一承载任务创建、断点续爬、暂停/恢复、结果查询、多存储投递以及 Cookie/代理资源管理。
 
-## 当前状态
+V2 位于独立目录和独立仓库中；迁移过程参考旧系统行为，但不修改旧 Spider、Publisher、Saver 或旧配置。
 
-代码与合成/脱敏 fixture 的离线验收已通过；当前旧商品解析器源码与 V2 已在 19 份同响应保存页上逐字段 19/19 一致，覆盖 FR、IE、NL、SE、TR、US；本机旧 MySQL/Redis 也已完成真实桥接和 outbox sink 回环，未留下探针数据。源码指纹门禁前曾累计采集 **23/33** 个真实同响应场景、0 个差异，但这些批次只保留为历史诊断。当前旧源码与 V2 在同一合成响应上的 11 类 no-result + 11 类 throttle 状态回归已 22/22 通过；可进入最终门禁的当前源码绑定进度以下一段为准。Cookie 生产链虽已实现并通过隔离测试，但最终门禁还要求 US/JP、双邮编的真实生产收据，证明地址确认、TTL、消费端可见与全程脱敏；在获得明确外部写入授权前不会生成该收据。
+> 当前阶段：核心代码和离线测试已完成，但仍处于受控迁移验收期。它可以用于本地开发和受控联调；在补齐认证、租户隔离、限流及真实对等证据前，不应直接作为公网生产服务，也不能宣布已经替换旧爬虫。
 
-上述 23 个旧批次采集于源码指纹门禁加入之前，只能作为初步同响应证据，最终合并器不会接收。后续真实页面又发现并修复了两处旧语义差异：FBT 缺失价格必须保留为 `""` 而非 `null`；`merchant` 即使 Amazon 新版页面没有旧 `seller_name` 节点，旧爬虫仍保存空字符串记录并判成功，V2 不得额外拒绝。每次修复都按设计使旧指纹批次失效。之后绑定 `54b5b6cfb0c58d2036268ad1900e07f306843bf4dfa8f66b50ca02b7958fe02b` 的 **23/33 个场景均通过、0 个差异**，覆盖 11 类成功、11 类 no-result 和 `search/throttle`，但外围完成性审计发现租约只按 owner 校验，无法在相同 Worker ID 被误复用时拒绝旧执行；任务与 outbox 现均增加每次领取唯一的 lease token。旧配置适配器随后补齐 4 条代理线路的显式白名单选择，当前冻结运行时源码指纹更新为 `8ca5b378a056e7327ecf6f4236d8b83ac29046b2d9ea273e3ba09350d9068cb1`。旧 23 份仅保留为历史回归证据，状态为 `source_binding_complete: true` 但 `source_matches_current: false`；当前可晋级进度重新为 **0/33**。最终必须基于新指纹重新采集完整矩阵，并同时覆盖 US、JP 和至少两个邮编；否则 `merge_eligible` 仍为 `false`，不能宣布生产功能对等，也不能直接替换旧系统。唯一进度真相见 `contracts/legacy_parity.v1.json`、`docs/PARITY_MATRIX.md` 和项目外受控批次目录。
+## 项目解决什么问题
 
-已实现的 canonical kind：
+旧爬虫按脚本和数据表分散运行，任务状态、恢复语义、资源使用和结果投递难以统一管理。V2 将这些能力收敛为一个标准服务：
 
-- `product`、`product_hw`、`product_time`
-- `search`、`search_hour`、`reviews`
-- `category_asin_list`、`rank_list`
-- `merchant`、`merchant_home`、`merchant_products`
+- 用统一 Job 模型承载 11 类 Amazon 抓取任务。
+- 每个输入项独立保存状态和连续断点，进程退出后可以继续执行。
+- 用租约和唯一 lease token 防止多个 Worker 重复提交或迟到提交。
+- 把 SQLite 中的标准结果与 JSONL、旧 Redis、旧 MySQL 等下游投递解耦。
+- 通过事件、指标和脱敏证据说明任务为何成功、失败或重试。
+- 同时服务人工操作、内部系统调用以及受限的 AI Agent 操作。
 
-迁移期仍注册 `product_jp`、`product_hw_jp`、`product_time_jp`、`search_jp`、`search_hour_jp`、`asin_list_jp`、`rank_list_jp` 等旧别名。
+典型使用场景包括商品详情和实时价格采集、关键词搜索、评论、类目/榜单 ASIN、商家主页与商家商品采集，以及旧系统任务和结果的受控迁移。
 
 ## 核心能力
 
-- SQLite WAL 保存 Job、逐项状态、租约、连续断点、事件和结果；进程重启不重复成功项，过期租约可恢复，迟到 Worker 结果会被拒绝。成功结果与所选二级存储的 outbox 在同一事务提交，MySQL、Redis 或 JSONL 暂时不可用不会丢失本地结果或把抓取误判为失败。
-- 结果存储已抽象为命名适配器：`sqlite` 是始终启用的控制面/结果原本，`jsonl` 是本地增量数据流，`legacy_mysql` 与 `legacy_redis` 复用旧投影。一个任务可同时选择多个去向；投递有独立租约、心跳、指数退避、去重回执和 dead-letter 状态。JSONL 目录与文件分别固定为 `0700`/`0600`，拒绝符号链接目标，回执只暴露文件名而非绝对路径。
-- 成功与已收到响应的失败都留下 SHA-256；启用证据采集后，解析/页面策略失败按内容哈希分别落盘，重试不会覆盖前一份证据；事件只保存白名单字段。
-- 受控迁移采集可在 HTTP 状态分类之前把响应临时交给内存 observer，因此 404/403/429 也能让当前旧解析器与 V2 处理同一响应；原始 HTML 不会进入批次文件。observer 异常不会改变正式抓取结果。
-- 每个新受控批次绑定当前 `src/amazon_crawler` 与 Agent Skill 的统一源码 SHA-256；未绑定、绑定到不同版本或与报告生成时源码不一致的批次都不能最终合并或晋级。
-- 成功响应证据不会原样保存上游响应头：仅保留内容类型、内容语言和内容长度，`Set-Cookie` 等其余头全部丢弃；证据 URL 会移除查询参数和 fragment，避免秘密进入 SQLite、API、界面或 Agent 输出。
-- 商品详情覆盖旧主结果字段与 `amazon_dimensions_detail` 维度投影；实时任务保留独立观测时间。
-- `product_time` 未指定 `add_date` 时，每次提交都会创建新的“现在”观测；调用方可传显式幂等键保证网络重试不重复，带旧观测时间的导入任务仍按观测时间稳定去重。
-- `search_hour` 的逐项幂等身份包含 `data_hour`，同一批次中相同关键词与页码的不同小时观测不会互相覆盖。
-- 新建与旧任务导入均默认保留旧重试预算：普通任务共 5 次尝试，`search_hour`/`search_hour_jp` 共 11 次尝试；API、CLI 和界面可显式覆盖。未预期的解析异常继续按旧语义重试，明确的无结果/不存在业务终态不重试。
-- 搜索流式片段、榜单 ACP 续传、类目、评论和商家结果均有字段契约与离线回放。榜单续页保持旧版并发度 3；任一续页失败会重试整项，避免旧版静默漏行。
-- `merchant_home` 的分页 Job 与父结果在同一事务创建；带 `source_task_id` 的 `merchant_products` 会原子创建商品详情 Job。
-- Cookie 消费兼容旧 `cookie:{marketplace}:{postal}:*` Redis key，支持缓存刷新、冷启动并发收敛、带短时负缓存的池穿透查询、按站点/邮编选择、隔离和健康统计；即使池确实为空，并发 Worker 也不会重复全量扫描 Redis。资源路由保持旧语义：`product_hw` 始终使用 overseas 池，其余池任务仅 JP 使用 overseas 池；`merchant` 与 `rank_list` 可使用独立静态 Cookie。
-- Cookie 生产链使用与抓取端一致的 `curl_cffi` TLS impersonation，建立首页会话、设置配送地址并重新加载页面确认目标邮编已生效，再补充 locale/currency 后按 TTL 写入；只在部署者显式确认时运行。定时维护按池/站点/邮编隔离失败，一个目标异常不会停止其余目标或下一轮，报告只给错误类型。
-- 动态代理支持获取、轮换、失败隔离，以及提取服务失败时的单飞刷新与冷却恢复；不会因为代理服务失败而偷偷降级为无代理直连。默认 `auto` 传输在依赖可用时使用 `curl_cffi` 做真实 TLS/JA3/HTTP2 浏览器画像；默认 Chrome 131 TLS profile 与对应 User-Agent/平台头保持一致，并区分页面导航、搜索分页和榜单 ACP 请求头。`httpx` 仅为显式降级通道。健康接口会如实返回当前 backend 和是否启用 TLS impersonation。
-- 旧 MySQL 任务可只读导入，结果可投影到旧 Redis 压缩缓冲或旧 MySQL，状态数字通过显式规则转换。旧配置只在显式开关下以 AST 读取数据，不导入旧模块或执行旧配置代码；MySQL/结果 Redis 写目标强制为 loopback，公网 Cookie 池和代理 API 需要各自单独授权。
-- Agent Skill 只开放创建、查看、暂停、恢复、经确认取消、结果、事件和投递状态；只能选择能力接口返回的存储名称。选择旧 MySQL/Redis 时还需显式确认外部结果写入，Agent 永远不能提供连接串、Cookie、代理或文件路径。
+| 能力 | 说明 |
+|---|---|
+| 断点续爬 | Job、输入项、连续断点、租约、尝试次数和事件均保存在 SQLite WAL 中 |
+| 任务控制 | 支持创建、查看、暂停、恢复、取消和幂等提交 |
+| 多 Worker | 通过租约、心跳和 lease token 协调并发 Worker，过期任务可重新领取 |
+| 多结果存储 | SQLite 为标准结果原本，可通过事务 outbox 投递到 JSONL、旧 Redis 或旧 MySQL |
+| Cookie 管理 | 支持静态 Cookie、Redis Cookie 池、邮编维度选择、隔离、刷新和显式 Cookie 生产 |
+| 代理管理 | 支持静态代理和动态代理提取；失败时隔离，不会静默降级为无代理直连 |
+| 可观测性 | 提供 Job 事件、结果、投递状态、指标、响应哈希和可选脱敏证据 |
+| 多种入口 | 提供 Web 管理界面、REST API、CLI 和 Agent Skill |
+| 旧系统兼容 | 可只读导入旧 MySQL 任务，并受控投影结果或同步状态 |
 
-## 安装与启动
+## 支持的任务
+
+| Canonical kind | 用途 |
+|---|---|
+| `product` | 标准商品详情 |
+| `product_hw` | 使用 overseas 资源池的商品详情 |
+| `product_time` | 带独立观测时间的实时商品数据 |
+| `search` | 关键词搜索结果 |
+| `search_hour` | 带小时批次身份的高频搜索结果 |
+| `reviews` | 商品评论 |
+| `category_asin_list` | 类目 ASIN 列表 |
+| `rank_list` | Amazon 榜单数据 |
+| `merchant` | 商家信息 |
+| `merchant_home` | 商家首页和派生分页任务 |
+| `merchant_products` | 商家商品页和派生商品详情任务 |
+
+迁移期间仍兼容 `product_jp`、`product_hw_jp`、`product_time_jp`、`search_jp`、`search_hour_jp`、`asin_list_jp`、`rank_list_jp` 等旧别名。新系统调用应优先使用 canonical kind，并通过 `marketplace_id` 表示站点。
+
+## 系统结构
+
+```mermaid
+flowchart LR
+    Caller[Web UI / CLI / API / Agent Skill] --> Service[Application Service]
+    Service --> Store[(SQLite WAL<br/>Job / Checkpoint / Event / Result)]
+    Worker[Crawl Worker] --> Store
+    Worker --> Resources[Cookie / Proxy / Rate Limit]
+    Resources --> Amazon[Amazon]
+    Amazon --> Parser[Amazon Plugins / Parsers]
+    Parser --> Worker
+    Store --> Outbox[Transactional Outbox]
+    Outbox --> Delivery[Delivery Worker]
+    Delivery --> JSONL[JSONL]
+    Delivery --> Redis[Legacy Redis]
+    Delivery --> MySQL[Legacy MySQL]
+```
+
+抓取成功与 outbox 记录在同一个 SQLite 事务中提交。因此二级存储暂时不可用时，标准结果不会丢失，抓取任务也不会被错误标记为失败；投递 Worker 会单独重试。
+
+## 环境要求
+
+- Python 3.11 或更高版本
+- macOS 或 Linux；Windows 建议使用 WSL2
+- 真实抓取所需的 Amazon Cookie
+- 按运行环境和访问质量选择的 HTTP 代理
+- 可选：Redis Cookie 池、旧 MySQL、旧结果 Redis
+
+## 5 分钟启动
+
+### 1. 获取代码
 
 ```bash
-cd amazon_crawler_v2
+git clone https://github.com/chenshan900821-commits/amazon-crawler-v2.git
+cd amazon-crawler-v2
+```
+
+该仓库目前为私有仓库，克隆账号需要具备访问权限。
+
+### 2. 创建虚拟环境并安装
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -e .
+```
+
+### 3. 初始化数据库
+
+```bash
+amazon-crawler init-db
+```
+
+默认数据库位于 `.data/crawler.db`，程序会按需创建目录。
+
+### 4. 启动管理界面、API 和本地 Worker
+
+```bash
+amazon-crawler serve --host 127.0.0.1 --port 3000
+```
+
+打开 <http://127.0.0.1:3000> 查看管理界面。健康检查：
+
+```bash
+curl http://127.0.0.1:3000/api/v1/health
+```
+
+`serve` 默认同时启动 API、Web 管理界面、抓取 Worker 和结果投递 Worker，适合本地开发。此时即使尚未配置 Cookie，控制台仍可启动；但默认 `CRAWLER_REQUIRE_COOKIE=true`，真实抓取任务会因 Cookie 不可用而失败或等待资源。
+
+如果不安装命令行入口，也可以将以上命令写成：
+
+```bash
 python -m amazon_crawler init-db
-python -m amazon_crawler serve --port 3000
+python -m amazon_crawler serve --host 127.0.0.1 --port 3000
 ```
 
-生产部署建议 API 与 Worker 分开：
+## 配置真实抓取资源
+
+运行时直接读取进程环境变量，不会自动加载 `.env` 文件。`.env.example` 是配置清单，不是自动生效的配置文件。开发环境可以导出变量，正式环境应通过部署平台的 Secret 管理功能注入敏感值。
+
+最小示例：
 
 ```bash
-CRAWLER_WORKER_ENABLED=false python -m amazon_crawler serve --host 0.0.0.0 --port 3000
-python -m amazon_crawler worker
+export CRAWLER_AMAZON_COOKIE='<your-cookie>'
+export CRAWLER_HTTP_PROXY='http://<proxy-host>:<proxy-port>'
+amazon-crawler serve --host 127.0.0.1 --port 3000
 ```
 
-当前 HTTP 服务是开发控制面，没有登录、租户隔离和公网限流。增加身份认证、租户授权、审计、配额和结果访问控制前，不得直接暴露到公网。
+不要把 Cookie、代理账号、Redis URL 或数据库 URL 提交到 Git。它们也不应通过 Job API 或 Agent 参数传入。
 
-## 创建任务
+常用配置：
 
-商品任务可直接传 ASIN 或受支持 Amazon 商品 URL：
+| 环境变量 | 默认值 | 用途 |
+|---|---:|---|
+| `CRAWLER_DB_PATH` | `.data/crawler.db` | SQLite 状态和标准结果库 |
+| `CRAWLER_EVIDENCE_DIR` | `.data/evidence` | 可选脱敏证据目录 |
+| `CRAWLER_CAPTURE_EVIDENCE` | `false` | 是否保存解析/页面策略失败证据 |
+| `CRAWLER_WORKER_ENABLED` | `true` | `serve` 是否内置抓取 Worker |
+| `CRAWLER_WORKER_CONCURRENCY` | `2` | 抓取 Worker 并发数 |
+| `CRAWLER_DELIVERY_WORKER_ENABLED` | `true` | `serve` 是否内置结果投递 Worker |
+| `CRAWLER_HTTP_TRANSPORT` | `auto` | `auto`、`curl_cffi` 或显式诊断回退 `httpx` |
+| `CRAWLER_HTTP_PROXY` | 空 | 固定 HTTP 代理 |
+| `CRAWLER_AMAZON_COOKIE` | 空 | 商品等任务使用的静态 Cookie |
+| `CRAWLER_MERCHANT_COOKIE` | 空 | 商家和榜单旧语义所需的专用 Cookie |
+| `CRAWLER_REQUIRE_COOKIE` | `true` | 是否强制真实抓取必须具备 Cookie |
+| `CRAWLER_COOKIE_REDIS_URL` | 空 | default Cookie 池 |
+| `CRAWLER_COOKIE_REDIS_OVERSEAS_URL` | 空 | overseas Cookie 池；`product_hw` 和 JP 链路使用 |
+| `CRAWLER_PROXY_EXTRACT_URL` | 空 | 动态代理提取服务地址 |
+| `CRAWLER_RESULT_JSONL_DIR` | `.data/result-sinks/jsonl` | JSONL 结果目录 |
+| `CRAWLER_LEGACY_MYSQL_URL` | 空 | 受控旧 MySQL 桥接 |
+| `CRAWLER_LEGACY_RESULT_REDIS_URL` | 空 | 受控旧 Redis 结果投递 |
+
+更多基础选项和注释见 [`.env.example`](.env.example)，最终有效值仍以 [`src/amazon_crawler/config.py`](src/amazon_crawler/config.py) 为准。
+
+## 创建第一个任务
+
+### 商品详情
+
+服务已经运行时，在另一个终端执行：
 
 ```bash
-python -m amazon_crawler create B0XXXXXXXX --kind product --marketplace US
-python -m amazon_crawler create B0XXXXXXXX --kind product_time --marketplace US --mode realtime
-python -m amazon_crawler create B0XXXXXXXX --kind product --marketplace US \
-  --result-sink sqlite --result-sink jsonl
+source .venv/bin/activate
+amazon-crawler create B0XXXXXXXX \
+  --kind product \
+  --marketplace US \
+  --postal-code 10001
 ```
 
-其他任务使用结构化 JSON；完整契约见 `skills/operate-amazon-crawler/references/input-contracts.md`：
+命令返回 JSON，其中包含 `job_id`。随后查询任务和结果：
 
 ```bash
-python -m amazon_crawler create --kind search \
+amazon-crawler show <job_id>
+amazon-crawler events <job_id>
+amazon-crawler results <job_id>
+```
+
+也可以直接提交受支持的 Amazon 商品 URL。URL 必须使用 HTTPS，并属于已允许的 Amazon 站点域名。
+
+### 实时商品观测
+
+```bash
+amazon-crawler create B0XXXXXXXX \
+  --kind product_time \
+  --marketplace US \
+  --postal-code 10001 \
+  --mode realtime
+```
+
+未提供 `add_date` 的 `product_time` 表示“立即产生一次新观测”，每次提交都会创建新任务。调用方重试同一次业务请求时，应提供稳定的 `--idempotency-key`。
+
+### 关键词搜索
+
+```bash
+amazon-crawler create \
+  --kind search \
   --input-json '{"keyword":"wireless mouse","market_id":"US","post_code":"10001","turn_page":1,"frequent":0}'
 ```
 
-所有命令输出 JSON，便于 Agent 和自动化程序稳定解析。
+搜索、类目、榜单和商家任务使用结构化 JSON。完整字段契约见 [`skills/operate-amazon-crawler/references/input-contracts.md`](skills/operate-amazon-crawler/references/input-contracts.md)。
 
-## Cookie 与旧系统桥
-
-Cookie 生产不会随普通服务启动而访问外部站点。只有配置运行时 Redis/代理并显式确认后才会执行：
+### 不启动 Web 服务，单次执行 Worker
 
 ```bash
-python -m amazon_crawler cookie-fill \
-  --marketplace US --postal-code 10001 --target 10 \
+amazon-crawler create B0XXXXXXXX --kind product --marketplace US
+amazon-crawler worker --once
+```
+
+`worker --once` 会处理当前可领取的抓取任务和结果投递。持续运行专用 Worker 时去掉 `--once`。
+
+## 通过 HTTP API 调用
+
+创建商品任务：
+
+```bash
+curl -X POST http://127.0.0.1:3000/api/v1/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "kind": "product",
+    "inputs": ["B0XXXXXXXX"],
+    "marketplace_id": "US",
+    "postal_code": "10001",
+    "execution_mode": "standard",
+    "options": {"result_sinks": ["sqlite"]}
+  }'
+```
+
+查询任务和结果：
+
+```bash
+curl http://127.0.0.1:3000/api/v1/jobs/<job_id>
+curl http://127.0.0.1:3000/api/v1/jobs/<job_id>/results
+curl http://127.0.0.1:3000/api/v1/jobs/<job_id>/events
+```
+
+接口基路径为 `/api/v1`。完整路由、请求字段和安全边界见 [`docs/API.md`](docs/API.md)。API 不接受 Cookie、代理、任意请求头、SQL、解析器代码或非白名单 URL。
+
+## 结果存储
+
+`sqlite` 始终作为标准结果原本。创建任务时可以重复指定 `--result-sink`，让同一结果可靠投递到多个已配置目标：
+
+```bash
+amazon-crawler create B0XXXXXXXX \
+  --kind product \
+  --marketplace US \
+  --result-sink sqlite \
+  --result-sink jsonl
+```
+
+可用 sink：
+
+| Sink | 用途 | 前置条件 |
+|---|---|---|
+| `sqlite` | 控制面和标准结果原本 | 始终启用 |
+| `jsonl` | 本地增量数据流 | 默认可用 |
+| `legacy_redis` | 兼容旧压缩结果缓冲 | 配置旧结果 Redis，外部写入需明确授权 |
+| `legacy_mysql` | 兼容旧结果表 | 配置旧 MySQL，外部写入需明确授权 |
+
+抓取状态与投递状态彼此独立。Job 成功后，二级存储仍可能处于 `pending`、重试或 `dead_letter`，但不会影响 SQLite 中已经提交的标准结果。
+
+## API 与 Worker 分离部署
+
+本地开发可使用单进程 `serve`。需要独立伸缩时，将 API、抓取 Worker 分开运行，并共享同一个持久化数据库路径：
+
+```bash
+CRAWLER_WORKER_ENABLED=false \
+CRAWLER_DELIVERY_WORKER_ENABLED=false \
+amazon-crawler serve --host 0.0.0.0 --port 3000
+```
+
+另开进程：
+
+```bash
+amazon-crawler worker
+```
+
+当前存储使用 SQLite，适合单机多进程和 P0 验证，不适合多节点共享文件系统。未来扩展到多节点时，需要将任务状态、租约、幂等键和 outbox 一并迁移到支持跨节点事务与锁语义的数据库，不能只替换结果表。
+
+## Cookie 池与 Cookie 生产
+
+普通服务启动不会自动执行 Cookie 生产。配置 Redis 和代理后，仍需显式确认外部写入：
+
+```bash
+amazon-crawler cookie-fill \
+  --marketplace US \
+  --postal-code 10001 \
+  --target 10 \
   --confirm-external-write
 ```
 
-为 `product_hw` 或 JP 链路补充旧 overseas 池时使用 `--pool overseas`。目标计划支持 `default`、`overseas` 两个顶层池；旧的无池名格式仍按 `default` 读取。
+为 `product_hw` 或 JP 链路补充 overseas 池时增加 `--pool overseas`。Cookie 生产会向 Amazon 发起请求，并向配置的 Cookie Redis 写入带 TTL 的数据；只有在确认站点访问和 Redis 写入均获授权后才能执行。
 
-最终受控验收使用独立采集器。它固定按 default/US、overseas/JP 严格串行，各创建至少一个新 Cookie，两个目标起点默认间隔至少 25 秒；只输出邮编哈希、数量、TTL 和布尔检查，不输出 Cookie 值、Redis key、URL 或连接信息：
+生产链会建立首页会话、设置配送地址、重新加载页面确认邮编，再补充 locale/currency。只有验证通过的 Cookie 才会写入池。更严格的 US/JP 双站点受控验收流程见 [`docs/CONTROLLED_ACCEPTANCE.md`](docs/CONTROLLED_ACCEPTANCE.md)。
 
-```bash
-CONTROLLED_COOKIE_PRODUCTION_AUTHORIZATION=approved-change-reference \
-PYTHONPATH=src:. python scripts/collect_cookie_production_evidence.py \
-  --us-postal-code 10001 --jp-postal-code 140-0001 \
-  --authorization-reference approved-change-reference \
-  --max-attempts-per-cookie 3 \
-  --output /secure/path/raw-cookie-production-receipt.json \
-  --confirm-authorized-cookie-production
-```
+## 旧系统桥接
 
-该命令会向 Amazon 发送请求并向两个 Cookie Redis 池新增带 TTL 的 Cookie；必须先得到覆盖这些具体外部副作用的明确授权。它不会写旧 MySQL、结果 Redis 或 V2 结果库。
-
-旧系统桥默认关闭。授权在本机复用旧配置时，无需把秘密复制到 `.env`：
+旧系统桥默认关闭。需要在本机受控复用旧配置时：
 
 ```bash
 CRAWLER_USE_LEGACY_CONFIG=1 \
 CRAWLER_LEGACY_CONFIG_PATH=../settings/config.py \
-python -m amazon_crawler capabilities
+amazon-crawler capabilities
 ```
 
-该模式只自动采用 loopback MySQL/结果 Redis。当前旧 Cookie Redis 是公网目标，只有额外设置 `CRAWLER_ALLOW_EXTERNAL_COOKIE_READ=1` 才作为只读 Cookie 来源；代理 API 同理需要 `CRAWLER_ALLOW_EXTERNAL_PROXY_API=1`。`CRAWLER_LEGACY_PROXY_ROUTE` 只接受 `qg`、`qghw`、`qgal`、`jlal`，默认 `qg`；未知线路直接拒绝，不会静默回退。配置值不会写入 V2 数据库、日志、健康接口或 Agent 输出。
-
-`legacy-import` 只读，并将 `product_hw_jp` 保留为 overseas 模式、`product_time_jp` 保留为 realtime 高优先级模式；手工 `legacy-export` 和 `legacy-sync-state` 必须显式确认外部写入。新任务也可通过 `options.result_sinks` 选择可靠 outbox 写出。Redis sink 用 Lua 原子投递标记防止重复；MySQL/MariaDB 保留旧 `INSERT IGNORE` 唯一键去重行为。跨 SQLite 与旧 MySQL 仍不是分布式事务，因此 MySQL sink 的精确去重仍依赖旧表业务唯一键。
-
-## 验证
+加载器只通过 AST 读取允许的配置值，不会导入或执行旧配置模块。它只自动采用 loopback MySQL 和结果 Redis；读取公网 Cookie 池或代理 API 还必须分别设置：
 
 ```bash
-PYTHONPATH=src python -m unittest discover -s tests -v
+export CRAWLER_ALLOW_EXTERNAL_COOKIE_READ=1
+export CRAWLER_ALLOW_EXTERNAL_PROXY_API=1
+```
+
+`legacy-import` 是只读操作；`legacy-export` 和 `legacy-sync-state` 会产生外部写入，必须显式确认。详细映射、幂等语义和回滚边界见 [`docs/LEGACY_BRIDGE.md`](docs/LEGACY_BRIDGE.md)。
+
+## 开发与测试
+
+安装开发所需的旧解析器对等依赖：
+
+```bash
+python -m pip install -e '.[legacy-parity]'
+```
+
+运行完整单元测试：
+
+```bash
+PYTHONPATH=src:. python -m unittest discover -s tests -v
+```
+
+常用静态和契约检查：
+
+```bash
 PYTHONPATH=src:. python scripts/audit_legacy_source_contracts.py
 PYTHONPATH=src:. python scripts/audit_legacy_platform_contracts.py
-python -m pip install -e '.[legacy-parity]'
-PYTHONPATH=src:. python scripts/audit_archived_product_parity.py \
-  ../debug_html --legacy-source-root .. \
-  --output /secure/path/current-source-product-parity.json
 python scripts/verify_parity_manifest.py
-PYTHONPATH=src:. python scripts/generate_controlled_local_checks.py \
-  --run-id isolated-run-id \
-  --authorization-reference change-ticket-reference \
-  --output-dir /secure/path/local-checks
-PYTHONPATH=src:. python scripts/run_legacy_bridge_roundtrip.py \
-  --legacy-config ../settings/config.py \
-  --output /secure/path/legacy-bridge-roundtrip.json \
-  --confirm-loopback-write
-PYTHONPATH=src:. python scripts/run_result_sink_roundtrip.py \
-  --legacy-config ../settings/config.py \
-  --output /secure/path/result-sink-roundtrip.json \
-  --confirm-loopback-write
-CONTROLLED_ACCEPTANCE_AUTHORIZATION=change-ticket-reference \
-PYTHONPATH=src:. python scripts/collect_controlled_v2_shadow.py \
-  /secure/path/controlled-shadow-plan.json \
-  --output /secure/path/controlled-shadow-bundle.json \
-  --confirm-authorized-network
-PYTHONPATH=src:. python scripts/build_controlled_run_report.py \
-  /path/to/controlled-shadow-bundle.json --output /path/to/redacted-run-report.json
-PYTHONPATH=src:. python scripts/compile_controlled_evidence.py /path/to/redacted-controlled-run.json
-PYTHONPATH=src:. python scripts/compile_cookie_production_evidence.py \
-  /path/to/redacted-cookie-production-receipt.json
-PYTHONPATH=src:. python scripts/promote_parity_manifest.py --confirm-reviewed
-python /Users/shanchen/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
-  skills/operate-amazon-crawler
 node --check src/amazon_crawler/interfaces/static/app.js
 ```
 
-只有完成 `docs/CONTROLLED_ACCEPTANCE.md` 的受控联调并补齐真实证据后，才允许运行并通过：
+`verify_parity_manifest.py --require-complete` 是最终生产对等门禁，不是普通开发测试。只有按照受控验收文档重新采集当前源码指纹绑定的完整真实证据后，它才应该通过。
 
-```bash
-python scripts/verify_parity_manifest.py --require-complete
+## 项目目录
+
+```text
+amazon-crawler-v2/
+├── src/amazon_crawler/
+│   ├── domain/          # Job、状态、端口和资源领域模型
+│   ├── application/     # 服务、抓取 Worker、投递 Worker、Cookie 维护
+│   ├── infra/           # SQLite、HTTP、Cookie/代理、证据和结果 sink
+│   ├── plugins/         # Amazon 各任务插件与解析器
+│   └── interfaces/      # CLI、HTTP API 和 Web 管理界面
+├── skills/              # AI Agent Skill 及输入契约
+├── contracts/           # 对等矩阵和受控验收机器契约
+├── docs/                # 架构、API、迁移和验收文档
+├── scripts/             # 审计、采集、回放和证据编译工具
+├── tests/               # 单元、契约、恢复和安全边界测试
+├── .env.example         # 环境变量清单，不包含真实秘密
+└── pyproject.toml       # Python 包和依赖定义
 ```
 
-## 文档
+## 当前已知边界
 
-- `ARCHITECTURE_EVALUATION.md`：旧实现与参考项目的取舍
-- `ARCHITECTURE.md`：状态机、资源层、派生任务和恢复语义
-- `docs/PARITY_MATRIX.md`：旧新功能对等矩阵
-- `docs/CONTROLLED_ACCEPTANCE.md`：最终受控联调门禁
-- `contracts/controlled-shadow-plan.schema.json`：33 场景真实联调计划的机器契约
-- `contracts/controlled-shadow-batch-plan.schema.json`：可增量采集、但不可单独晋级的真实联调批次契约
-- `contracts/controlled-product-dual-plan.schema.json`、`controlled-collection-dual-plan.schema.json`、`controlled-merchant-dual-plan.schema.json`：成功场景的当前旧源码同响应计划
-- `contracts/controlled-failure-dual-plan.schema.json`：no-result 与自然出现的 throttle/retryable 同响应计划；不会主动诱发限流
-- `scripts/report_cookie_pool_coverage.py`：只读 Cookie Redis key 元数据，按站点/邮编计数，不读取 Cookie value 或输出 key ID/连接信息
-- `docs/LEGACY_BRIDGE.md`：旧 MySQL/Redis 兼容桥
-- `docs/ARCHITECTURE.md`：分层、断点、多存储与 MediaCrawler 借鉴边界
-- `docs/API.md`：HTTP API
-- `CONTROLLED_EVOLUTION.md`：证据驱动的受控演进
+- 当前 HTTP 服务没有登录、租户隔离、公网限流、用量配额和结果级授权，不能直接暴露到公网。
+- 当前标准状态库是 SQLite；多节点分布式部署尚未实现。
+- 旧代码对等迁移采用“源码指纹 + 同响应双解析 + 33 场景矩阵”作为门禁。历史批次只能用于诊断，不能替代当前源码的完整证据。
+- 当前源码指纹对应的最终真实矩阵仍需重新采集，正式状态以 [`docs/PARITY_MATRIX.md`](docs/PARITY_MATRIX.md) 和 [`contracts/legacy_parity.v1.json`](contracts/legacy_parity.v1.json) 为准。
+- Cookie 生产代码已通过隔离测试；真实新 Cookie 的成功率仍受代理可用性和 Amazon 风控影响，不能把代码完成等同于生产资源可用。
+- 本项目参考了通用 connector/plugin 分层思路，但没有直接复用 MediaCrawlerPro 源码；商业化前仍需独立审查第三方协议、目标站点条款和数据合规要求。
+
+## 安全要求
+
+- 不要提交 `.env`、Cookie、代理凭据、数据库 URL、Redis URL、原始响应或包含个人信息的数据。
+- 对外运行前必须增加认证、租户授权、审计日志、速率限制、配额和结果访问控制。
+- 外部 Cookie 写入、旧 MySQL/Redis 写入和真实受控采集都需要显式授权；本地测试通过不代表已获生产权限。
+- 证据和事件只应保存经过白名单过滤及脱敏的字段。
+
+## 进一步阅读
+
+- [`ARCHITECTURE_EVALUATION.md`](ARCHITECTURE_EVALUATION.md)：旧实现评估和重构取舍
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：分层、状态机、断点、资源和多存储设计
+- [`docs/API.md`](docs/API.md)：HTTP API v1
+- [`docs/LEGACY_BRIDGE.md`](docs/LEGACY_BRIDGE.md)：旧 MySQL/Redis 兼容桥
+- [`docs/PARITY_MATRIX.md`](docs/PARITY_MATRIX.md)：旧新功能对等矩阵
+- [`docs/CONTROLLED_ACCEPTANCE.md`](docs/CONTROLLED_ACCEPTANCE.md)：最终受控联调门禁
+- [`CONTROLLED_EVOLUTION.md`](CONTROLLED_EVOLUTION.md)：证据驱动的受控演进
+
+## 许可证
+
+本仓库当前未声明开源许可证。未经仓库所有者许可，不应复制、再分发或将代码用于其他商业项目。
