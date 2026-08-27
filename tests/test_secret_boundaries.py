@@ -78,21 +78,59 @@ class SecretBoundaryTests(unittest.TestCase):
             if line and not line.startswith("#") and "=" in line:
                 key, value = line.split("=", 1)
                 values[key] = value
-        secret_keys = {
+        required_public_secret_keys = {
             "CRAWLER_HTTP_PROXY",
             "CRAWLER_AMAZON_COOKIE",
             "CRAWLER_MERCHANT_COOKIE",
             "CRAWLER_COOKIE_REDIS_URL",
             "CRAWLER_COOKIE_REDIS_OVERSEAS_URL",
-            "CRAWLER_COOKIE_REDIS_JP_URL",
             "CRAWLER_PROXY_EXTRACT_URL",
             "CRAWLER_PROXY_USERNAME",
             "CRAWLER_PROXY_PASSWORD",
+        }
+        internal_secret_keys = {
+            "CRAWLER_COOKIE_REDIS_JP_URL",
             "CRAWLER_LEGACY_MYSQL_URL",
             "CRAWLER_LEGACY_RESULT_REDIS_URL",
         }
-        self.assertTrue(secret_keys.issubset(values))
-        self.assertTrue(all(values[key] == "" for key in secret_keys))
+        required_public_keys = required_public_secret_keys | {
+            "CRAWLER_DB_PATH",
+            "CRAWLER_EVIDENCE_DIR",
+            "CRAWLER_RESULT_JSONL_DIR",
+            "CRAWLER_CAPTURE_EVIDENCE",
+            "CRAWLER_WORKER_ENABLED",
+            "CRAWLER_WORKER_CONCURRENCY",
+            "CRAWLER_POLL_SECONDS",
+            "CRAWLER_LEASE_SECONDS",
+            "CRAWLER_DELIVERY_WORKER_ENABLED",
+            "CRAWLER_DELIVERY_WORKER_CONCURRENCY",
+            "CRAWLER_DELIVERY_POLL_SECONDS",
+            "CRAWLER_DELIVERY_LEASE_SECONDS",
+            "CRAWLER_DELIVERY_MAX_ATTEMPTS",
+            "CRAWLER_REQUEST_TIMEOUT_SECONDS",
+            "CRAWLER_MIN_HOST_INTERVAL_SECONDS",
+            "CRAWLER_MAX_RESPONSE_BYTES",
+            "CRAWLER_HTTP_TRANSPORT",
+            "CRAWLER_USER_AGENT",
+            "CRAWLER_REQUIRE_COOKIE",
+            "CRAWLER_COOKIE_REFRESH_SECONDS",
+            "CRAWLER_COOKIE_QUARANTINE_SECONDS",
+            "CRAWLER_COOKIE_HARVEST_CONCURRENCY",
+            "CRAWLER_COOKIE_HARVEST_MAX_ATTEMPTS",
+            "CRAWLER_COOKIE_TTL_SECONDS",
+            "CRAWLER_COOKIE_HARVEST_REQUIRE_PROXY",
+            "CRAWLER_COOKIE_MAINTENANCE_ENABLED",
+            "CRAWLER_COOKIE_TARGETS_PATH",
+            "CRAWLER_COOKIE_MAINTENANCE_INTERVAL_SECONDS",
+            "CRAWLER_PROXY_QUARANTINE_SECONDS",
+        }
+        self.assertTrue(required_public_keys.issubset(values))
+        self.assertTrue(
+            all(
+                values.get(key, "") == ""
+                for key in required_public_secret_keys | internal_secret_keys
+            )
+        )
 
 
 if __name__ == "__main__":

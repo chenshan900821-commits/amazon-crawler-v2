@@ -21,6 +21,8 @@ Use `scripts/crawler_cli.py` for every operation. It fixes the project root, ret
 
 Run commands from the project root:
 
+`B0XXXXXXXX` below is only an ASIN-shaped marker. Replace it with the authorized target product's real 10-character ASIN. Replace `JOB_ID` with the `job.id` returned by `create`.
+
 ```bash
 python skills/operate-amazon-crawler/scripts/crawler_cli.py capabilities
 python skills/operate-amazon-crawler/scripts/crawler_cli.py create B0XXXXXXXX --marketplace US --mode standard
@@ -40,8 +42,8 @@ Read [references/operations.md](references/operations.md) for states, outcome se
 
 - Do not accept non-Amazon URLs, arbitrary request headers, cookies, proxies, credentials, or database paths from an Agent request.
 - Accept only result sink names returned by `capabilities`; never accept a connection URL or filesystem path as a task option.
-- Require explicit user confirmation before selecting `legacy_mysql` or `legacy_redis`, and include `--confirm-external-result-write`. `sqlite` and `jsonl` do not need that flag.
-- Do not run `cookie-fill`, `cookie-maintain`, `legacy-import`, `legacy-export`, or `legacy-sync-state`; those operations are outside this skill and require deployment authority.
+- Require explicit user confirmation before selecting any external MySQL or Redis result sink, and include `--confirm-external-result-write`. `sqlite` and `jsonl` do not need that flag.
+- Do not run Cookie production, Cookie maintenance, task import/export, or external state-sync commands; those operations are outside this skill and require deployment authority.
 - Do not start servers or workers through this skill.
 - Do not claim that `pause` interrupts an in-flight HTTP request; it stops new claims and waits for current leases.
 - Do not describe a crawl as failed merely because a secondary result delivery is retrying. Report crawl state and delivery state separately.

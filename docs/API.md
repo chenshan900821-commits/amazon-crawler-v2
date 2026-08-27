@@ -4,6 +4,8 @@ Base path: `/api/v1`
 
 This P0 API is for local development. It must sit behind authentication, tenant authorization, quotas, and audit controls before any public deployment.
 
+`B0XXXXXXXX` in the examples is a synthetic 10-character ASIN-shaped marker. Replace it with the target product's real ASIN before sending a request. Job IDs must come from the preceding create response; they are not caller-defined placeholders.
+
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | readiness, redacted resource counts, and active HTTP/TLS transport |
@@ -59,7 +61,7 @@ Supported canonical kinds are `product`, `product_hw`, `product_time`, `search`,
 
 Omitting `max_attempts` preserves the old retry budget: ordinary tasks receive 5 total attempts and `search_hour`/`search_hour_jp` receive 11. An explicit value from 1 to 20 overrides that default and participates in the idempotency identity.
 
-For `product_time`, a request with no `add_date` means “observe now” and creates a new job on each submission. Supply `idempotency_key` when retrying the same observation request. Imported legacy observations already include `add_date` and a stable legacy key.
+For `product_time`, a request with no `add_date` means “observe now” and creates a new job on each submission. Supply `idempotency_key` when retrying the same observation request. Inputs that already contain `add_date` retain a stable observation identity.
 
 `GET /health` reports `resources.transport.backend` and `resources.transport.tls_impersonation`. A clean production-equivalence environment must report `curl_cffi` and `true`; `httpx` means the process is running in the documented compatibility fallback and has not passed the TLS-fingerprint acceptance gate.
 

@@ -3,12 +3,12 @@ const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
 
 const kindConfigs = {
-  product: { label: "ASIN 或 Amazon 商品链接", placeholder: "每行一个，例如：\nB0XXXXXXXX\nhttps://www.amazon.com/dp/B0YYYYYYYY", help: "商品详情与变体维度会写入同一条幂等结果。", fields: [] },
-  product_hw: { label: "ASIN 或 Amazon 商品链接", placeholder: "每行一个 ASIN 或 Amazon 商品链接", help: "保留旧独立工作通道语义，结果契约与商品详情一致。", fields: [] },
+  product: { label: "ASIN 或 Amazon 商品链接", placeholder: "每行一个真实 ASIN，例如格式：\nB0XXXXXXXX（请替换）\n或粘贴真实 Amazon 商品链接", help: "B0XXXXXXXX 只是格式提示，不能原样提交。商品详情与变体维度会写入同一条幂等结果。", fields: [] },
+  product_hw: { label: "ASIN 或 Amazon 商品链接", placeholder: "每行一个真实 ASIN 或 Amazon 商品链接", help: "使用独立资源通道，结果契约与商品详情一致。", fields: [] },
   product_time: { label: "ASIN 或 Amazon 商品链接", placeholder: "每行一个 ASIN 或 Amazon 商品链接", help: "每次任务是一条实时观测；建议使用 Realtime 执行策略。", fields: [] },
   search: { label: "搜索关键词", placeholder: "每行一个关键词，例如：\nwireless mouse\nportable monitor", help: "每个关键词和页码形成一个可恢复采集项。", fields: ["page", "frequent"] },
   search_hour: { label: "小时快照关键词", placeholder: "每行一个关键词", help: "系统保存整点观测时间和关键词页快照。", fields: ["page", "frequent"] },
-  reviews: { label: "商品 ASIN", placeholder: "每行一个 ASIN，例如：\nB0XXXXXXXX", help: "采集商品详情响应中的评论区，并保留旧版原始行语义。", fields: [] },
+  reviews: { label: "商品 ASIN", placeholder: "每行一个真实 ASIN，例如格式：\nB0XXXXXXXX（请替换）", help: "B0XXXXXXXX 只是格式提示，不能原样提交。系统会采集商品详情响应中的评论区。", fields: [] },
   category_asin_list: { label: "类目 ID", placeholder: "每行一个类目 ID，例如：\n172282", help: "每个类目和页码形成一个持久化断点。", fields: ["page"] },
   rank_list: { label: "Amazon 榜单 URL", placeholder: "每行一个所选站点的 Amazon HTTPS 榜单 URL", help: "URL 必须属于所选 Amazon 站点，不接受任意外部地址。", fields: ["page", "category", "rankType"] },
   merchant: { label: "Seller ID", placeholder: "每行一个 Seller ID", help: "采集商家名称、企业信息与地址。", fields: [] },
@@ -39,8 +39,8 @@ async function loadCapabilities() {
   data.marketplaces.forEach(market => select.insertAdjacentHTML("beforeend", `<option value="${escapeHtml(market.id)}">${escapeHtml(market.id)} · ${escapeHtml(market.name)}</option>`));
   const labels = {
     jsonl: ["JSONL 数据流", "便于数据分析和后续系统消费"],
-    legacy_redis: ["旧 Redis 缓冲", "兼容现有数据消费链路"],
-    legacy_mysql: ["旧 MySQL 表", "兼容现有业务表结构"],
+    legacy_redis: ["Redis 结果流", "投递到已配置的 Redis 数据消费链路"],
+    legacy_mysql: ["MySQL 结果表", "投递到已配置的 MySQL 业务表"],
   };
   const configured = data.result_storage?.configured_sinks || ["sqlite"];
   configured.filter(name => name !== "sqlite").forEach(name => {

@@ -60,7 +60,7 @@
               <div><label>执行策略</label><select id="mode"><option value="standard">Standard · 标准</option><option value="overseas">Overseas · 海外</option><option value="realtime">Realtime · 实时优先</option></select></div>
             </div>
             <label id="inputLabel">ASIN 或 Amazon 商品链接</label>
-            <textarea id="inputs" rows="6" placeholder="每行一个，例如：&#10;B0XXXXXXXX&#10;https://www.amazon.com/dp/B0YYYYYYYY" required></textarea>
+            <textarea id="inputs" rows="6" placeholder="每行一个真实 ASIN，例如格式：&#10;B0XXXXXXXX（请替换）&#10;或粘贴真实 Amazon 商品链接" required></textarea>
             <p class="input-help" id="inputHelp">每行创建一个持久化采集项。</p>
             <div class="form-grid">
               <div><label>站点</label><select id="marketplace"><option value="">由链接识别</option></select></div>
@@ -106,7 +106,7 @@
         <div class="evolution-flow">
           <div><b>01</b><strong>观察</strong><span>成功率、失败码、字段缺失、站点差异</span></div>
           <i>→</i><div><b>02</b><strong>提出候选</strong><span>Agent 生成解析或调度变更建议</span></div>
-          <i>→</i><div><b>03</b><strong>离线回放</strong><span>固定证据集对比旧版与候选版本</span></div>
+          <i>→</i><div><b>03</b><strong>离线回放</strong><span>固定证据集验证候选版本</span></div>
           <i>→</i><div><b>04</b><strong>门禁发布</strong><span>指标达标且人工批准后才可晋级</span></div>
         </div>
       </section>
