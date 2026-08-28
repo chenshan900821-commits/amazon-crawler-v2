@@ -31,6 +31,7 @@ class Settings:
     amazon_cookie: str | None = field(repr=False)
     merchant_cookie: str | None = field(repr=False)
     require_cookie: bool
+    cookie_operations_api_enabled: bool
     cookie_redis_url: str | None = field(repr=False)
     cookie_redis_jp_url: str | None = field(repr=False)
     cookie_redis_overseas_url: str | None = field(repr=False)
@@ -134,6 +135,9 @@ class Settings:
                 legacy.merchant_cookie if legacy else None,
             ),
             require_cookie=_as_bool(os.getenv("CRAWLER_REQUIRE_COOKIE"), True),
+            cookie_operations_api_enabled=_as_bool(
+                os.getenv("CRAWLER_COOKIE_OPERATIONS_API_ENABLED"), False
+            ),
             cookie_redis_url=configured(
                 "CRAWLER_COOKIE_REDIS_URL",
                 legacy.cookie_redis_url if legacy else None,

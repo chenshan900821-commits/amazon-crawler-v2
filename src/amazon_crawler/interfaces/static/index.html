@@ -101,8 +101,46 @@
         </section>
       </section>
 
+      <section class="cookie-station panel" id="cookieStation">
+        <div class="panel-title">
+          <span>Amazon Cookie 资源</span><small>03 / SESSION FORGE</small>
+        </div>
+        <div class="cookie-layout">
+          <div class="cookie-overview">
+            <p class="eyebrow">OPERATOR-ONLY · VALIDATED SESSIONS</p>
+            <h2>获取可验证的<br />配送区域会话</h2>
+            <p>系统会访问所选 Amazon 站点、设置配送邮编并重新读取页面验证。只有验证通过的会话才写入已配置的 Redis Cookie 池。</p>
+            <div class="cookie-status-grid">
+              <div><span>功能状态</span><strong id="cookieApiStatus">正在读取</strong></div>
+              <div><span>资源池</span><strong id="cookiePoolStatus">—</strong></div>
+              <div><span>传输指纹</span><strong id="cookieTransportStatus">—</strong></div>
+            </div>
+            <div class="boundary-note">
+              <b>安全边界</b>
+              <span>页面不接收 Cookie、代理账号、提取链接或 Redis URL。所有秘密只能由部署环境注入，结果仅显示数量与失败码。</span>
+            </div>
+          </div>
+
+          <form class="cookie-form" id="cookieFillForm">
+            <div class="form-grid top-fields">
+              <div><label>Cookie 池</label><select id="cookiePool" disabled><option value="">等待资源</option></select></div>
+              <div><label>Amazon 站点</label><select id="cookieMarketplace" required><option value="">请选择</option></select></div>
+              <div><label>配送邮编</label><input id="cookiePostalCode" maxlength="32" autocomplete="off" placeholder="例如 10001" required /></div>
+              <div><label>目标池容量</label><input id="cookieTarget" type="number" min="1" max="50" value="1" required /></div>
+            </div>
+            <label class="confirm-operation">
+              <input id="cookieConfirm" type="checkbox" required />
+              <span><b>我确认本次外部操作已获授权</b><small>将向 Amazon 发起请求，并向所选 Redis Cookie 池写入带 TTL 的会话数据。</small></span>
+            </label>
+            <p class="form-note">同一个池同时只执行一个获取操作；单次目标上限为 50。该能力只属于人工运维控制面，不向 AI Agent Skill 开放。</p>
+            <button class="primary" id="cookieFillButton" type="submit" disabled><span>开始获取 Cookie</span><b>→</b></button>
+            <div class="cookie-result" id="cookieFillResult" role="status" aria-live="polite">尚未执行获取操作</div>
+          </form>
+        </div>
+      </section>
+
       <section class="evolution panel">
-        <div class="panel-title"><span>受控进化回路</span><small>03 / EVALUATION</small></div>
+        <div class="panel-title"><span>受控进化回路</span><small>04 / EVALUATION</small></div>
         <div class="evolution-flow">
           <div><b>01</b><strong>观察</strong><span>成功率、失败码、字段缺失、站点差异</span></div>
           <i>→</i><div><b>02</b><strong>提出候选</strong><span>Agent 生成解析或调度变更建议</span></div>

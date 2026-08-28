@@ -10,6 +10,8 @@ This P0 API is for local development. It must sit behind authentication, tenant 
 |---|---|---|
 | GET | `/health` | readiness, redacted resource counts, and active HTTP/TLS transport |
 | GET | `/capabilities` | plugins, marketplaces, modes and controls |
+| GET | `/cookie-pools` | redacted Cookie acquisition feature and pool state |
+| POST | `/cookie-pools/fill` | explicitly acquire validated cookies for one configured pool |
 | POST | `/jobs` | create a job; stable idempotency applies except for un-timestamped `product_time` observations |
 | GET | `/jobs` | list jobs; optional `status` and `limit` |
 | GET | `/jobs/{id}` | job, checkpoint and item state |
@@ -38,6 +40,22 @@ Product create example:
   }
 }
 ```
+
+Cookie acquisition example:
+
+```json
+{
+  "pool": "default",
+  "marketplace_id": "US",
+  "postal_code": "10001",
+  "target_count": 10,
+  "confirm_external_write": true
+}
+```
+
+This operation is unavailable unless `CRAWLER_COOKIE_OPERATIONS_API_ENABLED=true` and the selected Redis Cookie pool is configured. It sends external Amazon requests and writes validated sessions to Redis, so the confirmation field is mandatory. One pool accepts only one operation at a time and `target_count` is limited to 1–50. The response contains counts and bounded failure codes only; it never returns Cookie values, proxy credentials, extraction URLs, or Redis connection details. These runtime secrets are not accepted as request fields either.
+
+The Cookie endpoint is an operator-only control and is deliberately absent from the AI Agent Skill. Because this P0 server has no built-in login or tenant authorization, do not enable the endpoint on a publicly reachable service without an authenticated and audited control-plane boundary.
 
 Structured search example:
 
@@ -69,4 +87,4 @@ For `product_time`, a request with no `add_date` means “observe now” and cre
 
 `merchant_home` creates its `merchant_products` page jobs atomically with the parent result. A `merchant_products` task carrying `source_task_id` creates its product-detail job atomically as well. Parent and child jobs remain independently visible and resumable; `job.followup_created` events provide the relationship.
 
-The API never accepts cookies, proxies, request headers, SQL, parser code, or arbitrary URLs. Product URLs, rank URLs, and optional merchant URLs are accepted only when HTTPS and on an allowlisted Amazon marketplace domain. Cookie and proxy health endpoints expose counts and state only, never credential values.
+The API never accepts Cookie values, proxies, request headers, Redis URLs, SQL, parser code, or arbitrary URLs. Product URLs, rank URLs, and optional merchant URLs are accepted only when HTTPS and on an allowlisted Amazon marketplace domain. Cookie and proxy health endpoints expose counts and state only, never credential values.

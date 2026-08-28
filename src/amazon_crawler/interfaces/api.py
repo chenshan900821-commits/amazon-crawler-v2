@@ -2,17 +2,30 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError as PydanticValidationError,
+    field_validator,
+)
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Route
 
 from amazon_crawler.bootstrap import Application, build_application
-from amazon_crawler.domain.errors import ConflictError, CrawlerError, NotFoundError
+from amazon_crawler.domain.errors import (
+    ConflictError,
+    CrawlerError,
+    NotFoundError,
+    ValidationError,
+)
+from amazon_crawler.plugins.marketplaces import MARKETPLACES
 
 
 class CreateJobBody(BaseModel):
@@ -27,6 +40,34 @@ class CreateJobBody(BaseModel):
     max_attempts: int | None = Field(default=None, ge=1, le=20)
     idempotency_key: str | None = Field(default=None, max_length=200)
     options: dict[str, Any] = Field(default_factory=dict)
+
+
+class CookieFillBody(BaseModel):
+    """Operational parameters only; runtime credentials are never request fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pool: Literal["default", "overseas"] = "default"
+    marketplace_id: str = Field(min_length=2, max_length=8)
+    postal_code: str = Field(min_length=1, max_length=32)
+    target_count: int = Field(ge=1, le=50)
+    confirm_external_write: bool = False
+
+    @field_validator("marketplace_id")
+    @classmethod
+    def normalize_marketplace(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in MARKETPLACES:
+            raise ValueError("unsupported marketplace")
+        return normalized
+
+    @field_validator("postal_code")
+    @classmethod
+    def normalize_postal_code(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or any(character in "\r\n\x00" for character in normalized):
+            raise ValueError("invalid postal code")
+        return normalized
 
 
 def _error(exc: Exception, status_code: int) -> JSONResponse:
@@ -57,6 +98,7 @@ async def _json_body(request: Request) -> dict[str, Any]:
 def create_app(application: Application | None = None) -> Starlette:
     application = application or build_application()
     static_root = Path(__file__).parent / "static"
+    cookie_fill_locks: dict[str, asyncio.Lock] = {}
 
     @asynccontextmanager
     async def lifespan(_: Starlette):
@@ -132,6 +174,64 @@ def create_app(application: Application | None = None) -> Starlette:
     async def capabilities(_: Request) -> JSONResponse:
         return JSONResponse({"ok": True, **application.service.capabilities()})
 
+    async def cookie_pools(_: Request) -> JSONResponse:
+        pools = []
+        for pool_name in ("default", "overseas"):
+            harvester = application.cookie_harvesters.get(pool_name)
+            pools.append(
+                {
+                    "id": pool_name,
+                    "configured": harvester is not None,
+                    "backend": harvester.backend if harvester else None,
+                    "tls_impersonation": (
+                        harvester.tls_impersonation if harvester else None
+                    ),
+                }
+            )
+        return JSONResponse(
+            {
+                "ok": True,
+                "feature": {
+                    "api_enabled": application.settings.cookie_operations_api_enabled,
+                    "requires_confirmation": True,
+                    "accepts_runtime_secrets": False,
+                    "max_target_count": 50,
+                },
+                "pools": pools,
+            }
+        )
+
+    async def fill_cookie_pool(request: Request) -> JSONResponse:
+        body = CookieFillBody.model_validate(await _json_body(request))
+        if not application.settings.cookie_operations_api_enabled:
+            raise ConflictError("Cookie acquisition API is disabled by deployment policy")
+        if not body.confirm_external_write:
+            raise ValidationError(
+                "Cookie acquisition requires confirmation of external Amazon requests and Redis writes"
+            )
+        harvester = application.cookie_harvesters.get(body.pool)
+        if harvester is None:
+            raise ConflictError("selected Cookie pool is not configured")
+
+        lock = cookie_fill_locks.setdefault(body.pool, asyncio.Lock())
+        if lock.locked():
+            raise ConflictError("Cookie acquisition is already running for this pool")
+        async with lock:
+            report = await harvester.ensure_capacity(
+                body.marketplace_id,
+                body.postal_code,
+                body.target_count,
+            )
+        public_report = asdict(report)
+        return JSONResponse(
+            {
+                "ok": True,
+                "pool": body.pool,
+                "satisfied": report.available_after >= report.requested,
+                "report": public_report,
+            }
+        )
+
     async def list_jobs(request: Request) -> JSONResponse:
         limit = int(request.query_params.get("limit", "50"))
         status = request.query_params.get("status")
@@ -200,6 +300,8 @@ def create_app(application: Application | None = None) -> Starlette:
         Route("/", index),
         Route("/api/v1/health", health),
         Route("/api/v1/capabilities", capabilities),
+        Route("/api/v1/cookie-pools", cookie_pools, methods=["GET"]),
+        Route("/api/v1/cookie-pools/fill", fill_cookie_pool, methods=["POST"]),
         Route("/api/v1/jobs", list_jobs, methods=["GET"]),
         Route("/api/v1/jobs", create_job, methods=["POST"]),
         Route("/api/v1/jobs/{job_id:str}", get_job, methods=["GET"]),

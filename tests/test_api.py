@@ -9,19 +9,43 @@ from starlette.testclient import TestClient
 
 from amazon_crawler.bootstrap import build_application
 from amazon_crawler.config import Settings
+from amazon_crawler.domain.resources import HarvestReport
 from amazon_crawler.interfaces.api import create_app
+
+
+class FakeCookieHarvester:
+    backend = "curl_cffi"
+    tls_impersonation = True
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, int]] = []
+
+    async def ensure_capacity(
+        self, marketplace_id: str, postal_code: str, target_count: int
+    ) -> HarvestReport:
+        self.calls.append((marketplace_id, postal_code, target_count))
+        return HarvestReport(
+            marketplace_id="ATVPDKIKX0DER",
+            postal_code=postal_code,
+            requested=target_count,
+            created=2,
+            rejected=1,
+            available_after=target_count,
+            failure_codes=("blocked_page",),
+        )
 
 
 class ApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         root = Path(self.tempdir.name)
-        settings = replace(
+        self.settings = replace(
             Settings.from_env(root),
             db_path=root / "api.db",
             worker_enabled=False,
         )
-        self.client_context = TestClient(create_app(build_application(settings)))
+        self.application = build_application(self.settings)
+        self.client_context = TestClient(create_app(self.application))
         self.client = self.client_context.__enter__()
 
     def tearDown(self) -> None:
@@ -221,6 +245,98 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn("cookie_header", rendered)
         self.assertNotIn("proxy_url", rendered)
 
+    def test_cookie_pool_discovery_is_redacted_and_disabled_by_default(self) -> None:
+        response = self.client.get("/api/v1/cookie-pools")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["feature"]["api_enabled"])
+        self.assertFalse(payload["feature"]["accepts_runtime_secrets"])
+        self.assertTrue(payload["feature"]["requires_confirmation"])
+        self.assertEqual(payload["feature"]["max_target_count"], 50)
+        self.assertEqual(
+            {pool["id"] for pool in payload["pools"]}, {"default", "overseas"}
+        )
+        self.assertTrue(all(not pool["configured"] for pool in payload["pools"]))
+        self.assertNotIn("redis_url", response.text.lower())
+        self.assertNotIn("cookie_header", response.text.lower())
+
+    def test_cookie_fill_requires_deployment_enablement_and_configured_pool(self) -> None:
+        payload = {
+            "pool": "default",
+            "marketplace_id": "US",
+            "postal_code": "10001",
+            "target_count": 2,
+            "confirm_external_write": True,
+        }
+        disabled = self.client.post("/api/v1/cookie-pools/fill", json=payload)
+        self.assertEqual(disabled.status_code, 409)
+
+        self.application.settings = replace(
+            self.application.settings, cookie_operations_api_enabled=True
+        )
+        unconfigured = self.client.post("/api/v1/cookie-pools/fill", json=payload)
+        self.assertEqual(unconfigured.status_code, 409)
+        self.assertIn("not configured", unconfigured.json()["error"]["message"])
+
+    def test_cookie_fill_requires_confirmation_and_returns_only_safe_report(self) -> None:
+        harvester = FakeCookieHarvester()
+        self.application.settings = replace(
+            self.application.settings, cookie_operations_api_enabled=True
+        )
+        self.application.cookie_harvesters["default"] = harvester
+        payload = {
+            "pool": "default",
+            "marketplace_id": " us ",
+            "postal_code": " 10001 ",
+            "target_count": 3,
+            "confirm_external_write": False,
+        }
+
+        rejected = self.client.post("/api/v1/cookie-pools/fill", json=payload)
+        self.assertEqual(rejected.status_code, 422)
+        self.assertEqual(harvester.calls, [])
+
+        accepted = self.client.post(
+            "/api/v1/cookie-pools/fill",
+            json={**payload, "confirm_external_write": True},
+        )
+        self.assertEqual(accepted.status_code, 200)
+        self.assertTrue(accepted.json()["satisfied"])
+        self.assertEqual(harvester.calls, [("US", "10001", 3)])
+        self.assertEqual(accepted.json()["report"]["created"], 2)
+        self.assertEqual(accepted.json()["report"]["failure_codes"], ["blocked_page"])
+        rendered = accepted.text.lower()
+        self.assertNotIn("cookie_header", rendered)
+        self.assertNotIn("proxy_url", rendered)
+
+    def test_cookie_fill_rejects_credentials_and_oversized_targets(self) -> None:
+        self.application.settings = replace(
+            self.application.settings, cookie_operations_api_enabled=True
+        )
+        self.application.cookie_harvesters["default"] = FakeCookieHarvester()
+        base = {
+            "pool": "default",
+            "marketplace_id": "US",
+            "postal_code": "10001",
+            "target_count": 1,
+            "confirm_external_write": True,
+        }
+        with_secret = self.client.post(
+            "/api/v1/cookie-pools/fill",
+            json={**base, "cookie": "do-not-echo-this-cookie"},
+        )
+        self.assertEqual(with_secret.status_code, 422)
+        self.assertNotIn("do-not-echo-this-cookie", with_secret.text)
+        self.assertEqual(
+            with_secret.json()["error"]["message"], "request validation failed"
+        )
+
+        oversized = self.client.post(
+            "/api/v1/cookie-pools/fill", json={**base, "target_count": 51}
+        )
+        self.assertEqual(oversized.status_code, 422)
+
     def test_all_canonical_kinds_are_registered(self) -> None:
         payload = self.client.get("/api/v1/capabilities").json()
         kinds = {plugin["kind"] for plugin in payload["plugins"]}
@@ -297,6 +413,10 @@ class ApiTests(unittest.TestCase):
         self.assertIn("/deliveries?limit=30", javascript)
         self.assertIn("自动：普通 5 / 小时 11", rendered)
         self.assertIn("...retryOptions()", javascript)
+        self.assertIn('id="cookieFillForm"', rendered)
+        self.assertIn("Amazon Cookie 资源", rendered)
+        self.assertIn("/api/v1/cookie-pools/fill", javascript)
+        self.assertIn("confirm_external_write: true", javascript)
 
     def test_structured_search_input_preserves_legacy_fields(self) -> None:
         response = self.client.post(

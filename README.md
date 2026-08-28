@@ -249,6 +249,7 @@ Redis 密码包含特殊字符时同样需要 percent-encoding。只要配置了
 | `CRAWLER_HTTP_TRANSPORT` | `auto` | 正常保持 `auto`；`httpx` 仅用于诊断 |
 | `CRAWLER_USER_AGENT` | Chrome 131 UA | 一般不修改；必须与 TLS/browser 模拟配置保持一致 |
 | `CRAWLER_REQUIRE_COOKIE` | `true` | 正常抓取保持 `true`；无 Cookie 模式仅限受控诊断 |
+| `CRAWLER_COOKIE_OPERATIONS_API_ENABLED` | `false` | 只在管理服务已限制为授权运维人员访问时开启页面/API 获取功能 |
 | `CRAWLER_PROXY_QUARANTINE_SECONDS` | `300` | 调整失败代理的隔离时间 |
 
 所有公开运行字段、默认值和注释见 [`.env.example`](.env.example)，最终读取逻辑见 [`src/amazon_crawler/config.py`](src/amazon_crawler/config.py)。
@@ -386,7 +387,19 @@ amazon-crawler worker
 
 ## Cookie 池与 Cookie 生产
 
-普通服务启动不会自动执行 Cookie 生产。配置 Redis 和代理后，仍需显式确认外部写入：
+Cookie 获取已经是管理界面中的独立功能。它会建立新的 Amazon 匿名会话、设置目标配送邮编、回读页面确认地址生效，并将验证通过的 Cookie 写入 Redis 池。页面只接收资源池、站点、邮编和目标容量，不接收或显示 Cookie、代理凭证、提取链接及 Redis URL。
+
+该入口默认关闭。先通过本机 `.env` 或部署平台 Secret 管理配置 Redis 与代理，再显式开启运维入口：
+
+```bash
+CRAWLER_COOKIE_OPERATIONS_API_ENABLED=true
+```
+
+重启服务后，在首页的“Amazon Cookie 资源”区域选择资源池和站点，填写邮编、目标池容量，并勾选外部操作授权确认。页面会返回：本次新建数、拒绝数、当前可用数以及安全失败码，不返回 Cookie 值。单次目标容量上限为 50，同一个池同时只允许一个获取操作。
+
+若页面显示“运维 API 已关闭”，说明上述开关尚未开启；若显示“未配置 Redis 池”，说明 `CRAWLER_COOKIE_REDIS_URL` 和 `CRAWLER_COOKIE_REDIS_OVERSEAS_URL` 均未形成可用的 Cookie 生产池。默认 `CRAWLER_COOKIE_HARVEST_REQUIRE_PROXY=true`，没有可用代理时会安全失败，不会悄悄改为直连。
+
+也可以使用命令行执行同一生产内核。普通服务启动不会自动执行 Cookie 生产，命令行仍需显式确认外部写入：
 
 ```bash
 amazon-crawler cookie-fill \
@@ -399,6 +412,8 @@ amazon-crawler cookie-fill \
 为 `product_hw` 或 JP 链路补充 overseas 池时增加 `--pool overseas`。Cookie 生产会向 Amazon 发起请求，并向配置的 Cookie Redis 写入带 TTL 的数据；只有在确认站点访问和 Redis 写入均获授权后才能执行。
 
 生产链会建立首页会话、设置配送地址、重新加载页面确认邮编，再补充 locale/currency。只有验证通过的 Cookie 才会写入池。更严格的 US/JP 双站点受控验收流程见 [`docs/CONTROLLED_ACCEPTANCE.md`](docs/CONTROLLED_ACCEPTANCE.md)。
+
+Cookie 获取属于人工运维权限，不属于抓取任务输入，也没有加入仓库中的 AI Agent Skill。当前 HTTP 服务没有登录和租户授权，因此即使开启了该开关，也只能绑定本机或放在具备认证、授权、审计和限流的内部控制面之后，不能直接暴露到公网。
 
 ## 开发与测试
 

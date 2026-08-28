@@ -1,4 +1,4 @@
-const state = { jobs: [], filter: "", timer: null };
+const state = { jobs: [], filter: "", timer: null, cookieFeature: null, cookiePools: [], cookieRunning: false };
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
 
@@ -36,7 +36,12 @@ const canCancel = s => !["cancelled", "succeeded", "partial", "failed"].includes
 async function loadCapabilities() {
   const data = await api("/api/v1/capabilities");
   const select = $("#marketplace");
-  data.marketplaces.forEach(market => select.insertAdjacentHTML("beforeend", `<option value="${escapeHtml(market.id)}">${escapeHtml(market.id)} · ${escapeHtml(market.name)}</option>`));
+  const cookieSelect = $("#cookieMarketplace");
+  data.marketplaces.forEach(market => {
+    const option = `<option value="${escapeHtml(market.id)}">${escapeHtml(market.id)} · ${escapeHtml(market.name)}</option>`;
+    select.insertAdjacentHTML("beforeend", option);
+    cookieSelect.insertAdjacentHTML("beforeend", option);
+  });
   const labels = {
     jsonl: ["JSONL 数据流", "便于数据分析和后续系统消费"],
     legacy_redis: ["Redis 结果流", "投递到已配置的 Redis 数据消费链路"],
@@ -62,6 +67,49 @@ async function loadResourceHealth() {
   const health = await api("/api/v1/health");
   $("#metricCookies").textContent = health.resources.cookie.available;
   $("#healthText").textContent = health.resources.cookie.stale ? "系统就绪 · Cookie 待刷新" : "系统就绪 · 自动刷新";
+}
+
+function updateCookieButton() {
+  const configured = state.cookiePools.some(pool => pool.configured);
+  const enabled = Boolean(state.cookieFeature?.api_enabled && configured);
+  $("#cookieFillButton").disabled = !enabled || !$("#cookieConfirm").checked || state.cookieRunning;
+  $("#cookiePool").disabled = !enabled || state.cookieRunning;
+}
+
+async function loadCookieResources() {
+  const data = await api("/api/v1/cookie-pools");
+  state.cookieFeature = data.feature;
+  state.cookiePools = data.pools;
+  const configured = data.pools.filter(pool => pool.configured);
+  const poolSelect = $("#cookiePool");
+  const previous = poolSelect.value;
+  poolSelect.innerHTML = configured.length
+    ? configured.map(pool => `<option value="${escapeHtml(pool.id)}">${escapeHtml(pool.id)} pool</option>`).join("")
+    : '<option value="">尚未配置资源池</option>';
+  if (configured.some(pool => pool.id === previous)) poolSelect.value = previous;
+
+  const apiStatus = $("#cookieApiStatus");
+  const available = Boolean(data.feature.api_enabled && configured.length);
+  apiStatus.textContent = data.feature.api_enabled ? "运维 API 已开启" : "运维 API 已关闭";
+  apiStatus.className = available ? "ready" : "warning";
+  $("#cookiePoolStatus").textContent = configured.length ? `${configured.length} 个已配置` : "未配置 Redis 池";
+  const tlsCount = configured.filter(pool => pool.tls_impersonation).length;
+  $("#cookieTransportStatus").textContent = configured.length ? `${tlsCount}/${configured.length} TLS 模拟` : "等待运行资源";
+  $("#cookieTarget").max = String(data.feature.max_target_count);
+  updateCookieButton();
+}
+
+function summarizeFailureCodes(codes) {
+  const counts = codes.reduce((result, code) => ({ ...result, [code]: (result[code] || 0) + 1 }), {});
+  return Object.entries(counts).map(([code, count]) => `${escapeHtml(code)} × ${count}`).join(" · ");
+}
+
+function renderCookieResult(data) {
+  const report = data.report;
+  const failures = summarizeFailureCodes(report.failure_codes || []);
+  const result = $("#cookieFillResult");
+  result.className = `cookie-result ${data.satisfied ? "success" : "warning"}`;
+  result.innerHTML = `<strong>${data.satisfied ? "目标容量已满足" : "本次未达到目标容量"}</strong><br><span>新建 ${report.created} · 拒绝 ${report.rejected} · 当前可用 ${report.available_after} / 目标 ${report.requested}${failures ? `<br>原因 · ${failures}` : ""}</span>`;
 }
 
 async function loadJobs() {
@@ -157,7 +205,7 @@ async function showDetail(jobId) {
   $("#drawer").classList.add("open"); $("#drawerBackdrop").classList.add("open");
 }
 
-async function refresh() { try { await Promise.all([loadJobs(), loadMetrics(), loadResourceHealth()]); } catch (error) { toast(error.message, true); } }
+async function refresh() { try { await Promise.all([loadJobs(), loadMetrics(), loadResourceHealth(), loadCookieResources()]); } catch (error) { toast(error.message, true); } }
 function closeDrawer() { $("#drawer").classList.remove("open"); $("#drawerBackdrop").classList.remove("open"); }
 
 function applyKindConfig() {
@@ -223,12 +271,45 @@ $("#createForm").addEventListener("submit", async event => {
   } catch (error) { toast(error.message, true); } finally { button.disabled = false; }
 });
 
+$("#cookieFillForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (!$("#cookieConfirm").checked) return;
+  state.cookieRunning = true;
+  updateCookieButton();
+  const result = $("#cookieFillResult");
+  result.className = "cookie-result running";
+  result.textContent = "正在建立会话、设置并验证配送区域，请勿重复提交…";
+  try {
+    const data = await api("/api/v1/cookie-pools/fill", {
+      method: "POST",
+      body: JSON.stringify({
+        pool: $("#cookiePool").value,
+        marketplace_id: $("#cookieMarketplace").value,
+        postal_code: $("#cookiePostalCode").value.trim(),
+        target_count: Number($("#cookieTarget").value),
+        confirm_external_write: true,
+      }),
+    });
+    renderCookieResult(data);
+    toast(data.satisfied ? "Cookie 目标容量已满足" : "获取已完成，请查看失败原因", !data.satisfied);
+    $("#cookieConfirm").checked = false;
+  } catch (error) {
+    result.className = "cookie-result warning";
+    result.textContent = error.message;
+    toast(error.message, true);
+  } finally {
+    state.cookieRunning = false;
+    await Promise.all([loadCookieResources(), loadResourceHealth()]);
+    updateCookieButton();
+  }
+});
+
 $("#jobList").addEventListener("click", event => {
   const job = event.target.closest(".job"); if (!job) return; const action = event.target.dataset.action || "detail";
   action === "detail" ? showDetail(job.dataset.id).catch(e => toast(e.message, true)) : control(job.dataset.id, action).catch(e => toast(e.message, true));
 });
 document.querySelectorAll(".filter").forEach(button => button.addEventListener("click", () => { document.querySelectorAll(".filter").forEach(b => b.classList.remove("active")); button.classList.add("active"); state.filter = button.dataset.status; refresh(); }));
-$("#kind").addEventListener("change", applyKindConfig); $("#refreshButton").addEventListener("click", refresh); $("#drawerClose").addEventListener("click", closeDrawer); $("#drawerBackdrop").addEventListener("click", closeDrawer);
+$("#kind").addEventListener("change", applyKindConfig); $("#cookieConfirm").addEventListener("change", updateCookieButton); $("#refreshButton").addEventListener("click", refresh); $("#drawerClose").addEventListener("click", closeDrawer); $("#drawerBackdrop").addEventListener("click", closeDrawer);
 
 (async function boot() {
   try { applyKindConfig(); await loadCapabilities(); await refresh(); state.timer = setInterval(refresh, 5000); }
