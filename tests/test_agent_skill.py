@@ -12,6 +12,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = PROJECT_ROOT / "skills" / "operate-amazon-crawler"
+DISCOVERED_SKILL_ROOT = PROJECT_ROOT / ".agents" / "skills" / "operate-amazon-crawler"
 WRAPPER = SKILL_ROOT / "scripts" / "crawler_cli.py"
 
 
@@ -47,12 +48,17 @@ class AgentSkillTests(unittest.TestCase):
         )
         for path in required:
             self.assertTrue(path.is_file(), path)
+        self.assertTrue(DISCOVERED_SKILL_ROOT.is_dir())
+        self.assertEqual(DISCOVERED_SKILL_ROOT.resolve(), SKILL_ROOT.resolve())
+        self.assertTrue((DISCOVERED_SKILL_ROOT / "SKILL.md").is_file())
         skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         metadata = (SKILL_ROOT / "agents" / "openai.yaml").read_text(
             encoding="utf-8"
         )
         self.assertTrue(skill.startswith("---\nname: operate-amazon-crawler\n"))
         self.assertIn("description:", skill.split("---", 2)[1])
+        self.assertIn("deployment Worker prerequisite", skill)
+        self.assertIn("data.row_count", skill)
         self.assertIn("$operate-amazon-crawler", metadata)
 
     def test_wrapper_allowlist_excludes_deployment_and_secret_operations(self) -> None:

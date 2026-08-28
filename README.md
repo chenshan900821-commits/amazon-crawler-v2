@@ -130,6 +130,38 @@ SQLite 标准结果保存在 `.data/crawler.db`；选择 `jsonl` 结果去向后
 | 纯命令行单次运行 | `amazon-crawler create ...` 后执行 `amazon-crawler worker --once` | CLI | 脚本、批处理、调试 |
 | 常驻 Worker | `amazon-crawler worker` | CLI、API 或外部调度器 | 无页面、定时或持续运行 |
 
+## 使用 Agent Skill
+
+仓库级 Skill 位于 `.agents/skills/operate-amazon-crawler`，其内容指向 `skills/operate-amazon-crawler` 中的唯一实现。Codex 从仓库根目录或子目录启动时，可以按官方约定发现它；如果刚克隆或更新后没有出现，重启 Codex。目录规则见 [OpenAI Skills 文档](https://developers.openai.com/codex/skills)。
+
+在 Codex 中可以显式调用：
+
+```text
+$operate-amazon-crawler 为 US 站点创建一个已获授权的商品采集任务，并报告任务状态和结果数量。
+```
+
+Agent Skill 只允许创建、查看、暂停、恢复、取消以及读取任务证据，不允许启动 Worker、生产 Cookie、修改代理或接收数据库路径。调用 Skill 之前，运维人员必须已经运行以下任一种执行进程：
+
+```bash
+amazon-crawler serve
+# 或者
+amazon-crawler worker
+```
+
+两者必须与 Skill 使用相同的 `CRAWLER_DB_PATH`。`create` 返回 `created: true` 只表示任务已经持久化；继续用 `show` 确认它从 `pending` 进入 `running` 或终态。如果一直是 `pending`，先检查 Worker，不要反复创建相同任务。
+
+不依赖 Agent 界面时，可以直接验证 Skill 的确定性包装脚本：
+
+```bash
+python skills/operate-amazon-crawler/scripts/crawler_cli.py capabilities
+python skills/operate-amazon-crawler/scripts/crawler_cli.py create B0XXXXXXXX --marketplace US
+python skills/operate-amazon-crawler/scripts/crawler_cli.py show JOB_ID
+python skills/operate-amazon-crawler/scripts/crawler_cli.py results JOB_ID
+python skills/operate-amazon-crawler/scripts/crawler_cli.py events JOB_ID
+```
+
+搜索任务的 `results` 外层是一条“页面结果信封”，真实搜索行数在 `results[0].data.row_count`，商品列表在 `results[0].data.items`；不能把外层数组长度误当成搜索商品数量。完整安全边界和输入契约见 [`skills/operate-amazon-crawler/SKILL.md`](skills/operate-amazon-crawler/SKILL.md)。
+
 ## 需要新 Cookie 时
 
 如果 Redis 池已经满足容量，不需要先生产新 Cookie，可以直接创建抓取任务。确实需要补池时，可以使用页面中的“Amazon Cookie 资源”，也可以调用同一生产内核：

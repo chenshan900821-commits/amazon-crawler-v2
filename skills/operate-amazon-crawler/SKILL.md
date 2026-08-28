@@ -7,15 +7,22 @@ description: Create, inspect, pause, resume, cancel, and read resumable Amazon p
 
 Use `scripts/crawler_cli.py` for every operation. It fixes the project root, returns JSON, and blocks commands outside the safe operator surface.
 
+## Runtime Prerequisite
+
+This skill controls durable jobs but never starts the API, crawl Worker, delivery Worker, or Cookie maintenance. Before asking the skill to create work, a deployment operator must already be running either `amazon-crawler serve` with its Worker enabled or a dedicated `amazon-crawler worker` against the same `CRAWLER_DB_PATH`.
+
+Do not describe `created: true` as “the crawl has started.” It means the durable job was accepted. Use `show` to distinguish `pending` from `running` or a terminal state. If a new job remains `pending`, report that no active Worker has been confirmed; do not create duplicate jobs as a workaround.
+
 ## Workflow
 
-1. Run `capabilities` before creating a job when the marketplace or input form is unclear.
-2. Normalize the user's explicit scope into the selected task contract. Read [references/input-contracts.md](references/input-contracts.md) for non-product tasks.
-3. Run `create`; preserve its returned `job.id`. Repeated identical requests are idempotent. Keep the default `sqlite` result sink unless the user requests another sink shown by `capabilities`.
-4. Run `show` to report counts, item failures, checkpoint, and status. Use `events`, `results`, or `deliveries` only when evidence is requested.
-5. Use `pause` for a safe stop. In-flight work may finish before status becomes `paused`.
-6. Use `resume` only for `paused` or `pause_requested` jobs.
-7. Use `cancel` only after the user explicitly confirms cancellation, and include `--confirm-cancel`.
+1. Confirm the deployment Worker prerequisite is already satisfied. The skill must not start it.
+2. Run `capabilities` before creating a job when the marketplace or input form is unclear.
+3. Normalize the user's explicit scope into the selected task contract. Read [references/input-contracts.md](references/input-contracts.md) for non-product tasks.
+4. Run `create`; preserve its returned `job.id`. Repeated identical requests are idempotent. Keep the default `sqlite` result sink unless the user requests another sink shown by `capabilities`.
+5. Run `show` to report counts, item failures, checkpoint, and status. Use `events`, `results`, or `deliveries` only when evidence is requested.
+6. Use `pause` for a safe stop. In-flight work may finish before status becomes `paused`.
+7. Use `resume` only for `paused` or `pause_requested` jobs.
+8. Use `cancel` only after the user explicitly confirms cancellation, and include `--confirm-cancel`.
 
 ## Commands
 
@@ -32,11 +39,16 @@ python skills/operate-amazon-crawler/scripts/crawler_cli.py show JOB_ID
 python skills/operate-amazon-crawler/scripts/crawler_cli.py pause JOB_ID
 python skills/operate-amazon-crawler/scripts/crawler_cli.py resume JOB_ID
 python skills/operate-amazon-crawler/scripts/crawler_cli.py results JOB_ID
+python skills/operate-amazon-crawler/scripts/crawler_cli.py events JOB_ID
 python skills/operate-amazon-crawler/scripts/crawler_cli.py deliveries JOB_ID
 python skills/operate-amazon-crawler/scripts/crawler_cli.py cancel JOB_ID --confirm-cancel
 ```
 
 Read [references/operations.md](references/operations.md) for states, outcome semantics, and reporting rules.
+
+## Result Shape
+
+`results` returns one result envelope per completed job input, not necessarily one business row. Product fields are inside `results[].data`. Search tasks return one page envelope whose `data.row_count` is the number of collected rows, `data.items` contains those rows, and `data.task` preserves the normalized search request. Do not report a search as one row merely because the outer `results` array contains one envelope.
 
 ## Safety Rules
 
