@@ -177,7 +177,7 @@ def parse_merchant_products(
                 ),
                 "delivery_information": " ".join(
                     node.xpath(
-                        '//div[@data-cy="delivery-block"]/div[contains(@class, "delivery-message")]//text()'
+                        '//div[@data-cy="delivery-block"]/div[contains(@class, "delivery-message")]//text()[not(ancestor::script) and not(ancestor::style) and not(ancestor::noscript) and not(ancestor::template)]'
                     )
                 ),
                 "crawl_date": _now(),

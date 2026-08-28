@@ -69,6 +69,22 @@ class CollectionParserTests(unittest.TestCase):
             "Say 'hello' 1 0 ''",
         )
 
+    def test_search_delivery_excludes_embedded_script_and_style_text(self) -> None:
+        source = self.search_html.replace(
+            "Delivery tomorrow",
+            "<style>.delivery { color: blue; }</style>"
+            "<span>Delivery tomorrow</span>"
+            "<script>window.deliveryNoise = true;</script>",
+        )
+
+        rows = parse_search_html(
+            source,
+            self.task,
+            base_url="https://www.amazon.com",
+        )
+
+        self.assertEqual(rows[0]["delivery_information"], "Delivery tomorrow")
+
     def test_category_rank_counts_only_rows_with_an_asin(self) -> None:
         source = self.category_html.replace(
             '<div role="listitem"',

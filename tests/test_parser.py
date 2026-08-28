@@ -87,6 +87,34 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(single_quoted["is_video"], 0)
         self.assertEqual(stream["is_video"], 1)
 
+    def test_availability_and_delivery_exclude_embedded_script_text(self) -> None:
+        data = parse_product_html(
+            """
+            <html><body>
+              <span id="productTitle">Synthetic Product</span>
+              <div id="availability">
+                <style>.availability { color: green; }</style>
+                <span>In Stock</span>
+                <script>P.when('A').execute(function () { logNoise(); });</script>
+              </div>
+              <div id="deliveryBlockContainer">
+                <div id="mir-layout-DELIVERY_BLOCK-slot-PRIMARY_DELIVERY_MESSAGE_LARGE">
+                  <style>.delivery { color: blue; }</style>
+                  <span>Delivery tomorrow</span>
+                  <script>window.deliveryNoise = true;</script>
+                </div>
+              </div>
+            </body></html>
+            """,
+            asin="B000000001",
+            product_url="https://www.amazon.com/dp/B000000001",
+        )
+
+        self.assertEqual(data["availability"], "In Stock")
+        self.assertIn("Delivery tomorrow", data["delivery_info"])
+        self.assertNotIn("logNoise", data["availability"])
+        self.assertNotIn("deliveryNoise", data["delivery_info"])
+
     def test_fbt_missing_optional_values_keep_legacy_empty_strings(self) -> None:
         data = parse_product_html(
             """

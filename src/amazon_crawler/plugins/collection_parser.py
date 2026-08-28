@@ -177,7 +177,11 @@ def parse_search_html(
             "page": int(task.get("turn_page") or task.get("page") or 1),
             "selling_price": _legacy_price(selling_price, task["market_id"]),
             "scribing_price": _legacy_price(scribing_price, task["market_id"]),
-            "delivery_information": " ".join(node.xpath('//div[@data-cy="delivery-block"]/div[contains(@class, "delivery-message")]//text()')),
+            "delivery_information": " ".join(
+                node.xpath(
+                    '//div[@data-cy="delivery-block"]/div[contains(@class, "delivery-message")]//text()[not(ancestor::script) and not(ancestor::style) and not(ancestor::noscript) and not(ancestor::template)]'
+                )
+            ),
             "main_img_url": _xpath_string(node, '//span[@data-component-type="s-product-image"]//img/@src'),
             "link": _xpath_string(node, '//div[@data-cy="title-recipe"]/a/@href'),
             "coupon_info": _xpath_string(node, '//div[@data-cy="price-recipe"]/div[2]/span/span[2]/span[1]/text()|//div[@data-cy="price-recipe"]/div[1]/span//text()'),
@@ -253,7 +257,7 @@ def parse_category_html(source: str, task: dict[str, Any], *, base_url: str) -> 
                 "scribing_price": _legacy_price(scribing_price, task["market_id"]),
                 "delivery_information": " ".join(
                     node.xpath(
-                        './/div[@data-cy="delivery-recipe"]//div[contains(@class, "delivery-message")]//text()'
+                        './/div[@data-cy="delivery-recipe"]//div[contains(@class, "delivery-message")]//text()[not(ancestor::script) and not(ancestor::style) and not(ancestor::noscript) and not(ancestor::template)]'
                     )
                 ),
                 "main_img_url": _xpath_string(

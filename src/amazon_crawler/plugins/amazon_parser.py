@@ -869,14 +869,14 @@ def parse_product_html(
         "".join(
             _xpath_strings(
                 tree,
-                '//div[@id="deliveryBlockContainer"]//div[@id="mir-layout-DELIVERY_BLOCK-slot-PRIMARY_DELIVERY_MESSAGE_LARGE"]//text()',
+                '//div[@id="deliveryBlockContainer"]//div[@id="mir-layout-DELIVERY_BLOCK-slot-PRIMARY_DELIVERY_MESSAGE_LARGE"]//text()[not(ancestor::script) and not(ancestor::style) and not(ancestor::noscript) and not(ancestor::template)]',
             )
         ).strip()
         + " "
         + "".join(
             _xpath_strings(
                 tree,
-                '//div[@id="deliveryBlockContainer"]//div[@id="mir-layout-DELIVERY_BLOCK-slot-SECONDARY_DELIVERY_MESSAGE_LARGE"]//text()',
+                '//div[@id="deliveryBlockContainer"]//div[@id="mir-layout-DELIVERY_BLOCK-slot-SECONDARY_DELIVERY_MESSAGE_LARGE"]//text()[not(ancestor::script) and not(ancestor::style) and not(ancestor::noscript) and not(ancestor::template)]',
             )
         ).split("Join Prime")[0].strip()
     )
@@ -916,7 +916,12 @@ def parse_product_html(
         ],
     ) or _clean(str(offers.get("price") or ""))
     title = _first(tree, ['//*[@id="productTitle"]/text()']) or _clean(str(json_ld.get("name") or ""))
-    availability = _first(tree, ['//*[@id="availability"]//text()']) or _clean(
+    availability = _first(
+        tree,
+        [
+            '//*[@id="availability"]//text()[not(ancestor::script) and not(ancestor::style) and not(ancestor::noscript) and not(ancestor::template)]'
+        ],
+    ) or _clean(
         str(offers.get("availability") or "").rsplit("/", 1)[-1]
     )
     byline = _first(tree, ['//*[@id="bylineInfo"]/text()'])
@@ -1059,7 +1064,7 @@ def parse_product_html(
         " ".join(
             _all(
                 tree,
-                '//*[@id="deliveryBlockContainer"]//*[@id="mir-layout-DELIVERY_BLOCK-slot-PRIMARY_DELIVERY_MESSAGE_LARGE" or @id="mir-layout-DELIVERY_BLOCK-slot-SECONDARY_DELIVERY_MESSAGE_LARGE"]//text()',
+                '//*[@id="deliveryBlockContainer"]//*[@id="mir-layout-DELIVERY_BLOCK-slot-PRIMARY_DELIVERY_MESSAGE_LARGE" or @id="mir-layout-DELIVERY_BLOCK-slot-SECONDARY_DELIVERY_MESSAGE_LARGE"]//text()[not(ancestor::script) and not(ancestor::style) and not(ancestor::noscript) and not(ancestor::template)]',
             )
         )
     )
