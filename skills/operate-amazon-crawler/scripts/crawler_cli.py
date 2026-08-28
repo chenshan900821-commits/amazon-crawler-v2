@@ -118,7 +118,7 @@ def main() -> None:
                 "type": "MissingConfiguration",
                 "message": (
                     "Agent Skill 未创建任务：请按 blocking_issues 在 .env 或部署平台 "
-                    "Secret 中补齐配置，加载环境变量后重新运行 doctor。"
+                    "Secret 中补齐配置后重新调用 doctor；Skill 会自动重读 .env。"
                 ),
             }
             print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
