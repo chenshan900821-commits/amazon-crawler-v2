@@ -4,36 +4,163 @@
 
 > 当前阶段：P0 核心能力和离线测试已完成，可以用于本地开发与受控联调。在补齐认证、租户隔离、限流、配额和真实站点验收前，不应直接作为公网生产服务。
 
-## 项目解决什么问题
+## 先看这里：从安装到拿到结果
 
-Amazon 数据采集涉及任务调度、资源管理、页面解析、失败恢复和多目标投递。项目将这些能力收敛为一个标准服务：
+这一节是项目的唯一主运行入口。第一次使用时按顺序执行即可；后面的章节用于解释配置、任务类型和部署方式。
 
-- 用统一 Job 模型承载 11 类 Amazon 抓取任务。
-- 每个输入项独立保存状态和连续断点，进程退出后可以继续执行。
-- 用租约和唯一 lease token 防止多个 Worker 重复提交或迟到提交。
-- 把 SQLite 中的标准结果与 JSONL、Redis、MySQL 等下游投递解耦。
-- 通过事件、指标和脱敏证据说明任务为何成功、失败或重试。
-- 同时服务人工操作、内部系统调用以及受限的 AI Agent 操作。
+### 1. 安装
 
-典型使用场景包括商品详情和实时价格采集、关键词搜索、评论、类目/榜单 ASIN、商家主页与商家商品采集。
+环境要求：Python 3.11+，推荐 macOS、Linux 或 WSL2。
 
-## 核心能力
+```bash
+git clone https://github.com/chenshan900821-commits/amazon-crawler-v2.git
+cd amazon-crawler-v2
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
+### 2. 准备并加载配置
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+编辑 `.env`，至少配置一种已获授权的 Amazon Cookie 来源：
+
+- Redis Cookie 池：`CRAWLER_COOKIE_REDIS_URL`，推荐用于持续运行。
+- 静态 Cookie：`CRAWLER_AMAZON_COOKIE`，适合单会话联调。
+
+需要代理时，动态代理配置 `CRAWLER_PROXY_EXTRACT_URL`，固定代理配置 `CRAWLER_HTTP_PROXY`。每个占位符具体代表什么，见[配置真实抓取资源](#配置真实抓取资源)。真实 Cookie、代理凭证和数据库连接只放在本机 `.env` 或部署平台 Secret 中。
+
+项目不会自动读取 `.env`。每次打开新终端，都先执行：
+
+```bash
+source .venv/bin/activate
+set -a
+source .env
+set +a
+```
+
+然后初始化任务数据库：
+
+```bash
+amazon-crawler init-db
+```
+
+默认数据库是 `.data/crawler.db`。同一套 API、CLI 和 Worker 必须使用同一个 `CRAWLER_DB_PATH`。
+
+### 3A. 使用页面运行
+
+```bash
+amazon-crawler serve --host 127.0.0.1 --port 3000
+```
+
+打开 <http://127.0.0.1:3000>。`serve` 默认同时启动页面、API、抓取 Worker 和结果投递 Worker。
+
+在页面点击“创建任务”后，任务会先持久化为 `pending`，随后由 Worker 自动领取并执行。页面关闭不会中断任务，但上面的服务进程必须保持运行。如果已有任务正在执行，新任务会在队列中等待。
+
+健康检查：
+
+```bash
+curl http://127.0.0.1:3000/api/v1/health
+curl http://127.0.0.1:3000/api/v1/capabilities
+```
+
+### 3B. 完全不使用页面
+
+创建一个商品任务。示例 ASIN 必须替换成目标商品 `/dp/` 后真实的 10 位 ASIN：
+
+```bash
+amazon-crawler create B07FZ8S74R \
+  --kind product \
+  --marketplace US \
+  --postal-code 10001
+```
+
+如果没有运行 `serve` 或常驻 Worker，再执行一轮队列：
+
+```bash
+amazon-crawler worker --once
+```
+
+`worker --once` 会处理当前可领取的抓取任务和结果投递，然后退出。长期无人值守运行使用：
+
+```bash
+amazon-crawler worker
+```
+
+常驻 Worker 只负责消费队列；定时创建新任务可以由 Cron、systemd timer 或其他调度平台调用 `amazon-crawler create`。`product_time` 适合周期性实时观测；普通 `product` 的相同请求默认幂等，不会因重复提交而反复采集。
+
+### 4. 查看任务和结果
+
+`create` 命令返回的任务编号位于 `job.id`。把真实编号代入：
+
+```bash
+JOB_ID='JOB_ID_FROM_CREATE_RESPONSE'
+amazon-crawler show "$JOB_ID"
+amazon-crawler events "$JOB_ID"
+amazon-crawler results "$JOB_ID"
+amazon-crawler deliveries "$JOB_ID"
+```
+
+页面运行时，也可以直接在“任务编队”中打开任务详情。
+
+| 状态 | 含义 |
+|---|---|
+| `pending` | 已保存，等待 Worker 领取 |
+| `running` | Worker 正在抓取 |
+| `succeeded` | 全部输入已结束；仍应确认结果数量大于 0 |
+| `partial` | 已有可用结果，但存在失败输入 |
+| `failed` | 没有形成可用的完整结果，应查看 `events` 中的失败码 |
+
+SQLite 标准结果保存在 `.data/crawler.db`；选择 `jsonl` 结果去向后，增量文件保存在 `.data/result-sinks/jsonl`。
+
+### 5. 停止与再次启动
+
+在前台进程中按 `Ctrl+C` 安全停止。再次打开终端后，重新加载 `.env`，然后运行 `amazon-crawler serve` 或 `amazon-crawler worker`。任务状态和断点保存在 SQLite 中；Worker 会恢复可继续处理的任务，不要求浏览器保持打开。
+
+## 三种运行方式
+
+| 方式 | 启动命令 | 谁创建任务 | 适用场景 |
+|---|---|---|---|
+| 页面与 Worker 一体 | `amazon-crawler serve` | 页面、CLI 或 API | 本地使用、单机受控部署 |
+| 纯命令行单次运行 | `amazon-crawler create ...` 后执行 `amazon-crawler worker --once` | CLI | 脚本、批处理、调试 |
+| 常驻 Worker | `amazon-crawler worker` | CLI、API 或外部调度器 | 无页面、定时或持续运行 |
+
+## 需要新 Cookie 时
+
+如果 Redis 池已经满足容量，不需要先生产新 Cookie，可以直接创建抓取任务。确实需要补池时，可以使用页面中的“Amazon Cookie 资源”，也可以调用同一生产内核：
+
+```bash
+amazon-crawler cookie-fill \
+  --pool default \
+  --marketplace US \
+  --target 1 \
+  --confirm-external-write
+```
+
+站点的配送区域由配置自动选择。只有 `satisfied=true` 且 `report.available_after >= report.requested` 才表示目标容量已满足；`created=0` 也可能只是池内原有容量已经足够。Cookie 生产会访问 Amazon 并写入 Redis，必须先确认相关访问与写入已获授权。
+
+## 项目能力
+
+Amazon 数据采集涉及任务调度、资源管理、页面解析、失败恢复和结果投递。本项目将它们收敛为一个可恢复的服务：
 
 | 能力 | 说明 |
 |---|---|
-| 断点续爬 | Job、输入项、连续断点、租约、尝试次数和事件均保存在 SQLite WAL 中 |
+| 断点续爬 | Job、输入项、连续断点、租约、尝试次数和事件保存在 SQLite WAL 中 |
 | 任务控制 | 支持创建、查看、暂停、恢复、取消和幂等提交 |
-| 多 Worker | 通过租约、心跳和 lease token 协调并发 Worker，过期任务可重新领取 |
+| Worker | 通过租约、心跳和 lease token 协调并发，过期任务可重新领取 |
 | 多结果存储 | SQLite 为标准结果原本，可通过事务 outbox 投递到 JSONL、Redis 或 MySQL |
-| Cookie 管理 | 支持静态 Cookie、Redis Cookie 池、邮编维度选择、隔离、刷新和显式 Cookie 生产 |
-| 代理管理 | 支持静态代理和动态代理提取；失败时隔离，不会静默降级为无代理直连 |
-| 可观测性 | 提供 Job 事件、结果、投递状态、指标、响应哈希和可选脱敏证据 |
+| Cookie 与代理 | 支持静态 Cookie、Redis Cookie 池、配送区域、代理提取、隔离和刷新 |
+| 可观测性 | 提供任务事件、结果、投递状态、指标、响应哈希和可选脱敏证据 |
 | 多种入口 | 提供 Web 管理界面、REST API、CLI 和 Agent Skill |
-| Agent 集成 | Agent Skill 提供受限、可审计的任务操作能力，不暴露 Cookie、代理或连接信息 |
 
 ## 支持的任务
 
-| Canonical kind | 用途 |
+| Kind | 用途 |
 |---|---|
 | `product` | 标准商品详情 |
 | `product_hw` | 使用 overseas 资源池的商品详情 |
@@ -65,210 +192,13 @@ flowchart LR
     Delivery --> MySQL[MySQL]
 ```
 
-抓取成功与 outbox 记录在同一个 SQLite 事务中提交。因此二级存储暂时不可用时，标准结果不会丢失，抓取任务也不会被错误标记为失败；投递 Worker 会单独重试。
-
-## 环境要求
-
-- Python 3.11 或更高版本
-- macOS 或 Linux；Windows 建议使用 WSL2
-- 真实抓取所需的 Amazon Cookie
-- 按运行环境和访问质量选择的 HTTP 代理
-- 可选：Redis Cookie 池、MySQL、结果 Redis
-
-## 5 分钟启动
-
-### 1. 获取代码
-
-```bash
-git clone https://github.com/chenshan900821-commits/amazon-crawler-v2.git
-cd amazon-crawler-v2
-```
-
-该仓库目前为私有仓库，克隆账号需要具备访问权限。
-
-### 2. 创建虚拟环境并安装
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e .
-```
-
-### 3. 初始化数据库
-
-```bash
-amazon-crawler init-db
-```
-
-默认数据库位于 `.data/crawler.db`，程序会按需创建目录。
-
-### 4. 启动管理界面、API 和本地 Worker
-
-```bash
-amazon-crawler serve --host 127.0.0.1 --port 3000
-```
-
-打开 <http://127.0.0.1:3000> 查看管理界面。健康检查：
-
-```bash
-curl http://127.0.0.1:3000/api/v1/health
-```
-
-`serve` 默认同时启动 API、Web 管理界面、抓取 Worker 和结果投递 Worker，适合本地开发。此时即使尚未配置 Cookie，控制台仍可启动；但默认 `CRAWLER_REQUIRE_COOKIE=true`，真实抓取任务会因 Cookie 不可用而失败或等待资源。
-
-如果不安装命令行入口，也可以将以上命令写成：
-
-```bash
-python -m amazon_crawler init-db
-python -m amazon_crawler serve --host 127.0.0.1 --port 3000
-```
-
-## 一次完整可运行流程
-
-下面是一条从“运行资源就绪”到“拿到并检查结果”的主路径。首次使用建议按顺序执行，不要把“服务已启动”“Cookie 获取请求已结束”误认为真实采集已经成功。
-
-### 第 1 步：准备本机配置
-
-```bash
-cp .env.example .env
-chmod 600 .env
-```
-
-在 `.env` 中选择一种已获授权的 Cookie 来源：
-
-| Cookie 来源 | 适用情况 | 必须配置 |
-|---|---|---|
-| Redis Cookie 池（推荐） | 已有多个站点/邮编会话，或需要持续补充会话 | `CRAWLER_COOKIE_REDIS_URL`；海外池另配 `CRAWLER_COOKIE_REDIS_OVERSEAS_URL` |
-| 静态 Cookie | 单站点、单会话的受控联调 | `CRAWLER_AMAZON_COOKIE` |
-| 新 Cookie 获取 | 需要创建匿名配送区域会话并写入 Redis | Redis Cookie 池、可用代理、`CRAWLER_COOKIE_OPERATIONS_API_ENABLED=true` |
-
-动态代理使用 `CRAWLER_PROXY_EXTRACT_URL`，固定代理使用 `CRAWLER_HTTP_PROXY`。真实值只放在本机 `.env` 或部署平台 Secret 管理中；不要通过页面、Job API 或 Agent 参数传入。字段含义和示例见下一节“配置真实抓取资源”。
-
-加载配置并初始化：
-
-```bash
-source .venv/bin/activate
-set -a
-source .env
-set +a
-amazon-crawler init-db
-```
-
-### 第 2 步：启动并检查能力
-
-```bash
-amazon-crawler serve --host 127.0.0.1 --port 3000
-```
-
-保持服务运行，在另一个已经加载同一份 `.env` 的终端检查：
-
-```bash
-curl http://127.0.0.1:3000/api/v1/health
-curl http://127.0.0.1:3000/api/v1/capabilities
-curl http://127.0.0.1:3000/api/v1/cookie-pools
-```
-
-继续执行真实采集前，应确认：
-
-- `/health` 返回 `ok: true`。
-- `/capabilities` 中包含准备执行的任务类型和结果去向。
-- 使用 Cookie 获取功能时，`/cookie-pools` 的 `feature.api_enabled` 为 `true`，目标池的 `configured` 为 `true`，并且 `tls_impersonation` 为 `true`。
-- 首页“健康 Cookie”显示的是当前服务进程已经加载到缓存中的安全计数；显示“待刷新”表示 Worker 尚未读取资源池，不代表 Redis 中一定没有 Cookie。已确认池内有可用 Cookie 时，不需要先生产新 Cookie，可以直接创建采集任务并从任务事件验证资源领取结果。
-
-### 第 3 步：仅在需要时获取新 Cookie
-
-方式一：打开 <http://127.0.0.1:3000>，在“Amazon Cookie 资源”区域选择池和站点。系统会自动显示并使用该站点的预设配送区域；只需输入目标容量，确认已获外部操作授权后执行。页面仅展示已经配置默认配送区域的站点，不要求用户手动填写邮编。
-
-方式二：使用命令行调用同一生产内核：
-
-```bash
-amazon-crawler cookie-fill \
-  --pool default \
-  --marketplace US \
-  --target 1 \
-  --confirm-external-write
-```
-
-命令行同样会自动选择站点默认值。只有执行多邮编受控验收时，运维人员才需要使用可选的 `--postal-code` 显式覆盖；普通页面和日常补池不开放这个输入。
-
-**Cookie Gate：只有响应中的 `satisfied=true` 且 `report.available_after >= report.requested` 才表示目标容量已满足。** `created=0` 不一定是失败——当池内原本已经达到目标容量时也会返回 0；反过来，命令正常结束但 `satisfied=false` 仍然不能算成功。未通过该门槛时，先按失败码处理代理或 Amazon 风控，不要假定系统已经拿到新 Cookie。
-
-### 第 4 步：创建真实采集任务
-
-首页可直接选择“关键词搜索”，填写 `wireless mouse`、站点 `US`、邮编 `10001` 后创建。对应的命令行是：
-
-```bash
-amazon-crawler create \
-  --kind search \
-  --input-json '{"keyword":"wireless mouse","market_id":"US","post_code":"10001","turn_page":1,"frequent":0}'
-```
-
-商品任务需要把示例 ASIN 替换为真实的 10 位 ASIN：
-
-```bash
-amazon-crawler create B07FZ8S74R \
-  --kind product \
-  --marketplace US \
-  --postal-code 10001
-```
-
-`serve` 默认已包含 Worker，会自动领取任务。如果 API 与 Worker 分开运行，或者只希望执行一轮队列，则运行：
-
-```bash
-amazon-crawler worker --once
-```
-
-### 第 5 步：查看状态、证据与结果
-
-创建命令返回的任务编号位于 `job.id`。把它填入下面的本地变量：
-
-```bash
-JOB_ID='JOB_ID_FROM_CREATE_RESPONSE'
-amazon-crawler show "$JOB_ID"
-amazon-crawler events "$JOB_ID"
-amazon-crawler results "$JOB_ID"
-amazon-crawler deliveries "$JOB_ID"
-```
-
-也可以在首页任务编队中打开任务详情，查看逐项状态、失败码、事件、结果、字段覆盖率以及脱敏证据哈希。
-
-**Result Gate：任务状态为 `succeeded` 且结果数量大于 0，才表示全部输入已完成；`partial` 表示已有可用结果，但仍需查看失败输入和事件；`failed` 或结果数量为 0 时不能进入下游业务。** SQLite 标准结果位于 `.data/crawler.db`，启用 `jsonl` 去向后，增量文件位于 `.data/result-sinks/jsonl`。
-
-### 失败码怎么判断
-
-| 失败码 | 含义 | 优先处理 |
-|---|---|---|
-| `proxy_acquisition_failed` | 动态代理提取接口不可用、响应格式错误或没有有效端口 | 检查提取链接、线路状态、IP 白名单和服务商返回格式 |
-| `proxy_unavailable` | 当前没有可用代理，且策略禁止静默直连 | 补充代理资源或等待隔离时间结束；不要为“跑通”而关闭代理门槛 |
-| `blocked` | Amazon 返回验证码、风控页或其他拦截页面 | 降低频率、替换健康代理并重新获取会话 |
-| `missing_csrf_token` / `missing_validation_token` | 当前页面形态或会话未提供地址设置所需令牌 | 检查站点、出口地区、页面是否被降级或拦截 |
-| `invalid_address` / `address_not_applied` | 邮编无效，或重新读取页面后配送区域未生效 | 核对站点与邮编组合，再检查 Cookie 与代理是否保持同一会话 |
-| `network_error` | 请求超时、连接中断或代理链路波动 | 先检查代理连通性和超时配置，再利用任务重试/断点恢复 |
-
-本机受控验收记录（2026-08-28）：使用已获授权的 Redis Cookie 池和动态代理，关键词搜索任务成功返回 16 条标准结果，结果已写入 SQLite；新 Cookie 获取链路能够执行并返回安全失败码，但当次代理质量与 Amazon 风控未让 `Cookie Gate` 达标，因此没有把无效会话写入池。该记录证明现有池的采集主路径可运行，不代表任意时刻、任意代理都能生产新 Cookie。
+抓取成功与 outbox 在同一个 SQLite 事务中提交。二级存储暂时不可用时，SQLite 中的标准结果不会丢失，投递 Worker 会单独重试。
 
 ## 配置真实抓取资源
 
-运行时直接读取进程环境变量，不会自动加载 `.env`。仓库中的 [`.env.example`](.env.example) 只定义字段、格式和安全默认值，所有 Cookie、代理及 Redis 凭证都必须保持为空。
+运行时只读取进程环境变量，不会自动加载 `.env`。复制、加载和启动命令统一见[从安装到拿到结果](#先看这里从安装到拿到结果)，这里仅解释各配置项的真实含义。
 
-本地开发可以复制一份仅供本机使用的配置：
-
-```bash
-cp .env.example .env
-chmod 600 .env
-```
-
-编辑 `.env` 后，在启动进程的同一个终端加载：
-
-```bash
-set -a
-source .env
-set +a
-amazon-crawler serve --host 127.0.0.1 --port 3000
-```
-
-`.env` 已被 Git 忽略。正式部署应使用部署平台的 Secret 管理功能，不要把 Cookie、代理账号、提取链接或 Redis URL 写进镜像、启动脚本、Job API 或 Agent 参数。
+仓库中的 [`.env.example`](.env.example) 只定义字段、格式和安全默认值，必须保持为占位符或空值。本机 `.env` 已被 Git 忽略；正式部署应使用部署平台的 Secret 管理功能，不要把 Cookie、代理账号、提取链接或 Redis URL 写进镜像、启动脚本、Job API 或 Agent 参数。
 
 ### Amazon Cookie 填什么
 
@@ -378,32 +308,18 @@ Redis 密码包含特殊字符时同样需要 percent-encoding。只要配置了
 
 所有公开运行字段、默认值和注释见 [`.env.example`](.env.example)，最终读取逻辑见 [`src/amazon_crawler/config.py`](src/amazon_crawler/config.py)。
 
-## 创建第一个任务
+## 任务输入示例
 
 以下命令中的 `B0XXXXXXXX` 是一个合成 ASIN 格式标记。执行真实任务前，必须替换为目标商品详情页 `/dp/` 后面的 10 位 ASIN；它本身不代表真实商品。
 
 ### 商品详情
 
-服务已经运行时，在另一个终端执行：
-
 ```bash
-source .venv/bin/activate
 amazon-crawler create B0XXXXXXXX \
   --kind product \
   --marketplace US \
   --postal-code 10001
 ```
-
-命令返回 JSON，任务编号位于 `job.id`。将该值赋给本地变量后查询任务和结果：
-
-```bash
-JOB_ID='JOB_ID_FROM_CREATE_RESPONSE'
-amazon-crawler show "$JOB_ID"
-amazon-crawler events "$JOB_ID"
-amazon-crawler results "$JOB_ID"
-```
-
-`JOB_ID_FROM_CREATE_RESPONSE` 必须替换为刚才返回的真实 `job.id`，不能原样执行。
 
 也可以直接提交受支持的 Amazon 商品 URL。URL 必须使用 HTTPS，并属于已允许的 Amazon 站点域名。
 
@@ -428,15 +344,6 @@ amazon-crawler create \
 ```
 
 搜索、类目、榜单和商家任务使用结构化 JSON。完整字段契约见 [`skills/operate-amazon-crawler/references/input-contracts.md`](skills/operate-amazon-crawler/references/input-contracts.md)。
-
-### 不启动 Web 服务，单次执行 Worker
-
-```bash
-amazon-crawler create B0XXXXXXXX --kind product --marketplace US
-amazon-crawler worker --once
-```
-
-`worker --once` 会处理当前可领取的抓取任务和结果投递。持续运行专用 Worker 时去掉 `--once`。
 
 ## 通过 HTTP API 调用
 
@@ -523,16 +430,7 @@ CRAWLER_COOKIE_OPERATIONS_API_ENABLED=true
 
 若页面显示“运维 API 已关闭”，说明上述开关尚未开启；若显示“未配置 Redis 池”，说明 `CRAWLER_COOKIE_REDIS_URL` 和 `CRAWLER_COOKIE_REDIS_OVERSEAS_URL` 均未形成可用的 Cookie 生产池。默认 `CRAWLER_COOKIE_HARVEST_REQUIRE_PROXY=true`，没有可用代理时会安全失败，不会悄悄改为直连。
 
-也可以使用命令行执行同一生产内核。普通服务启动不会自动执行 Cookie 生产，命令行仍需显式确认外部写入：
-
-```bash
-amazon-crawler cookie-fill \
-  --marketplace US \
-  --target 10 \
-  --confirm-external-write
-```
-
-为 `product_hw` 或 JP 链路补充 overseas 池时增加 `--pool overseas`。普通补池无需 `--postal-code`；多邮编受控验收可显式覆盖。Cookie 生产会向 Amazon 发起请求，并向配置的 Cookie Redis 写入带 TTL 的数据；只有在确认站点访问和 Redis 写入均获授权后才能执行。
+命令行补池方式见[需要新 Cookie 时](#需要新-cookie-时)。普通服务启动不会自动生产 Cookie。为 `product_hw` 或 JP 链路补充 overseas 池时使用 `--pool overseas`；普通补池无需 `--postal-code`，多邮编受控验收才显式覆盖。Cookie 生产会向 Amazon 发起请求，并向配置的 Cookie Redis 写入带 TTL 的数据。
 
 生产链会建立首页会话、设置配送地址、重新加载页面确认邮编，再补充 locale/currency。只有验证通过的 Cookie 才会写入池。更严格的 US/JP 双站点受控验收流程见 [`docs/CONTROLLED_ACCEPTANCE.md`](docs/CONTROLLED_ACCEPTANCE.md)。
 
