@@ -1,4 +1,4 @@
-const state = { jobs: [], filter: "", timer: null, cookieFeature: null, cookiePools: [], cookieRunning: false };
+const state = { jobs: [], filter: "", timer: null, cookieFeature: null, cookiePools: [], marketplaces: [], cookieRunning: false };
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
 
@@ -35,13 +35,15 @@ const canCancel = s => !["cancelled", "succeeded", "partial", "failed"].includes
 
 async function loadCapabilities() {
   const data = await api("/api/v1/capabilities");
+  state.marketplaces = data.marketplaces;
   const select = $("#marketplace");
   const cookieSelect = $("#cookieMarketplace");
   data.marketplaces.forEach(market => {
     const option = `<option value="${escapeHtml(market.id)}">${escapeHtml(market.id)} · ${escapeHtml(market.name)}</option>`;
     select.insertAdjacentHTML("beforeend", option);
-    cookieSelect.insertAdjacentHTML("beforeend", option);
+    if (market.default_postal_code) cookieSelect.insertAdjacentHTML("beforeend", option);
   });
+  syncCookiePostalSelection();
   const labels = {
     jsonl: ["JSONL 数据流", "便于数据分析和后续系统消费"],
     legacy_redis: ["Redis 结果流", "投递到已配置的 Redis 数据消费链路"],
@@ -52,6 +54,12 @@ async function loadCapabilities() {
     const [title, detail] = labels[name] || [name, "已配置的结果存储"];
     $("#resultSinkOptions").insertAdjacentHTML("beforeend", `<label class="sink-option"><input type="checkbox" value="${escapeHtml(name)}" /><span><b>${escapeHtml(title)}</b><small>${escapeHtml(detail)}</small></span></label>`);
   });
+}
+
+function syncCookiePostalSelection() {
+  const selected = state.marketplaces.find(market => market.id === $("#cookieMarketplace").value);
+  $("#cookiePostalPreview").textContent = selected?.default_postal_code || "选择站点后自动配置";
+  updateCookieButton();
 }
 
 async function loadMetrics() {
@@ -71,8 +79,9 @@ async function loadResourceHealth() {
 
 function updateCookieButton() {
   const configured = state.cookiePools.some(pool => pool.configured);
+  const selected = state.marketplaces.find(market => market.id === $("#cookieMarketplace").value);
   const enabled = Boolean(state.cookieFeature?.api_enabled && configured);
-  $("#cookieFillButton").disabled = !enabled || !$("#cookieConfirm").checked || state.cookieRunning;
+  $("#cookieFillButton").disabled = !enabled || !selected?.default_postal_code || !$("#cookieConfirm").checked || state.cookieRunning;
   $("#cookiePool").disabled = !enabled || state.cookieRunning;
 }
 
@@ -109,7 +118,7 @@ function renderCookieResult(data) {
   const failures = summarizeFailureCodes(report.failure_codes || []);
   const result = $("#cookieFillResult");
   result.className = `cookie-result ${data.satisfied ? "success" : "warning"}`;
-  result.innerHTML = `<strong>${data.satisfied ? "目标容量已满足" : "本次未达到目标容量"}</strong><br><span>新建 ${report.created} · 拒绝 ${report.rejected} · 当前可用 ${report.available_after} / 目标 ${report.requested}${failures ? `<br>原因 · ${failures}` : ""}</span>`;
+  result.innerHTML = `<strong>${data.satisfied ? "目标容量已满足" : "本次未达到目标容量"}</strong><br><span>配送区域 ${escapeHtml(report.postal_code)} · 新建 ${report.created} · 拒绝 ${report.rejected} · 当前可用 ${report.available_after} / 目标 ${report.requested}${failures ? `<br>原因 · ${failures}` : ""}</span>`;
 }
 
 async function loadJobs() {
@@ -285,7 +294,6 @@ $("#cookieFillForm").addEventListener("submit", async event => {
       body: JSON.stringify({
         pool: $("#cookiePool").value,
         marketplace_id: $("#cookieMarketplace").value,
-        postal_code: $("#cookiePostalCode").value.trim(),
         target_count: Number($("#cookieTarget").value),
         confirm_external_write: true,
       }),
@@ -309,7 +317,7 @@ $("#jobList").addEventListener("click", event => {
   action === "detail" ? showDetail(job.dataset.id).catch(e => toast(e.message, true)) : control(job.dataset.id, action).catch(e => toast(e.message, true));
 });
 document.querySelectorAll(".filter").forEach(button => button.addEventListener("click", () => { document.querySelectorAll(".filter").forEach(b => b.classList.remove("active")); button.classList.add("active"); state.filter = button.dataset.status; refresh(); }));
-$("#kind").addEventListener("change", applyKindConfig); $("#cookieConfirm").addEventListener("change", updateCookieButton); $("#refreshButton").addEventListener("click", refresh); $("#drawerClose").addEventListener("click", closeDrawer); $("#drawerBackdrop").addEventListener("click", closeDrawer);
+$("#kind").addEventListener("change", applyKindConfig); $("#cookieMarketplace").addEventListener("change", syncCookiePostalSelection); $("#cookieConfirm").addEventListener("change", updateCookieButton); $("#refreshButton").addEventListener("click", refresh); $("#drawerClose").addEventListener("click", closeDrawer); $("#drawerBackdrop").addEventListener("click", closeDrawer);
 
 (async function boot() {
   try { applyKindConfig(); await loadCapabilities(); await refresh(); state.timer = setInterval(refresh, 5000); }

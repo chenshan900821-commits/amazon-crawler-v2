@@ -47,13 +47,14 @@ Cookie acquisition example:
 {
   "pool": "default",
   "marketplace_id": "US",
-  "postal_code": "10001",
   "target_count": 10,
   "confirm_external_write": true
 }
 ```
 
-This operation is unavailable unless `CRAWLER_COOKIE_OPERATIONS_API_ENABLED=true` and the selected Redis Cookie pool is configured. It sends external Amazon requests and writes validated sessions to Redis, so the confirmation field is mandatory. One pool accepts only one operation at a time and `target_count` is limited to 1–50. The response contains counts and bounded failure codes only; it never returns Cookie values, proxy credentials, extraction URLs, or Redis connection details. These runtime secrets are not accepted as request fields either.
+The service selects the configured default delivery region for `marketplace_id`; the management page never asks the user to enter it. `GET /capabilities` exposes `default_postal_code` so the page can display the same server-owned choice. An optional `postal_code` override remains available to authorized operators for controlled multi-region acceptance only. Marketplaces without a configured default are not offered by the page and reject an omitted override.
+
+This operation is unavailable unless `CRAWLER_COOKIE_OPERATIONS_API_ENABLED=true` and the selected Redis Cookie pool is configured. It sends external Amazon requests and writes validated sessions to Redis, so the confirmation field is mandatory. One pool accepts only one operation at a time and `target_count` is limited to 1–50. The response contains the selected delivery region, counts and bounded failure codes only; it never returns Cookie values, proxy credentials, extraction URLs, or Redis connection details. These runtime secrets are not accepted as request fields either.
 
 The Cookie endpoint is an operator-only control and is deliberately absent from the AI Agent Skill. Because this P0 server has no built-in login or tenant authorization, do not enable the endpoint on a publicly reachable service without an authenticated and audited control-plane boundary.
 

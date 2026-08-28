@@ -25,7 +25,10 @@ from amazon_crawler.domain.errors import (
     NotFoundError,
     ValidationError,
 )
-from amazon_crawler.plugins.marketplaces import MARKETPLACES
+from amazon_crawler.plugins.marketplaces import (
+    MARKETPLACES,
+    marketplace_default_postal_code,
+)
 
 
 class CreateJobBody(BaseModel):
@@ -49,7 +52,7 @@ class CookieFillBody(BaseModel):
 
     pool: Literal["default", "overseas"] = "default"
     marketplace_id: str = Field(min_length=2, max_length=8)
-    postal_code: str = Field(min_length=1, max_length=32)
+    postal_code: str | None = Field(default=None, min_length=1, max_length=32)
     target_count: int = Field(ge=1, le=50)
     confirm_external_write: bool = False
 
@@ -63,7 +66,9 @@ class CookieFillBody(BaseModel):
 
     @field_validator("postal_code")
     @classmethod
-    def normalize_postal_code(cls, value: str) -> str:
+    def normalize_postal_code(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         normalized = value.strip()
         if not normalized or any(character in "\r\n\x00" for character in normalized):
             raise ValueError("invalid postal code")
@@ -212,6 +217,13 @@ def create_app(application: Application | None = None) -> Starlette:
         harvester = application.cookie_harvesters.get(body.pool)
         if harvester is None:
             raise ConflictError("selected Cookie pool is not configured")
+        postal_code = body.postal_code or marketplace_default_postal_code(
+            body.marketplace_id
+        )
+        if postal_code is None:
+            raise ValidationError(
+                "selected marketplace has no configured default delivery region"
+            )
 
         lock = cookie_fill_locks.setdefault(body.pool, asyncio.Lock())
         if lock.locked():
@@ -219,7 +231,7 @@ def create_app(application: Application | None = None) -> Starlette:
         async with lock:
             report = await harvester.ensure_capacity(
                 body.marketplace_id,
-                body.postal_code,
+                postal_code,
                 body.target_count,
             )
         public_report = asdict(report)
@@ -227,6 +239,10 @@ def create_app(application: Application | None = None) -> Starlette:
             {
                 "ok": True,
                 "pool": body.pool,
+                "postal_selection": {
+                    "postal_code": postal_code,
+                    "source": "explicit" if body.postal_code else "marketplace_default",
+                },
                 "satisfied": report.available_after >= report.requested,
                 "report": public_report,
             }

@@ -21,6 +21,7 @@ from amazon_crawler.infra.legacy_compat import (
     assert_legacy_job_compatibility,
     legacy_state_for,
 )
+from amazon_crawler.plugins.marketplaces import marketplace_default_postal_code
 
 
 def _print(value: Any) -> None:
@@ -92,7 +93,10 @@ def _parser() -> argparse.ArgumentParser:
         help="explicitly create validated postal-code cookies in the configured Redis pool",
     )
     cookie_fill.add_argument("--marketplace", required=True)
-    cookie_fill.add_argument("--postal-code", required=True)
+    cookie_fill.add_argument(
+        "--postal-code",
+        help="optional operator override; defaults to the configured marketplace delivery region",
+    )
     cookie_fill.add_argument("--target", required=True, type=int)
     cookie_fill.add_argument(
         "--pool",
@@ -237,14 +241,33 @@ def main() -> None:
                 raise ValidationError(
                     f"cookie pool {args.pool!r} is not configured"
                 )
+            postal_code = args.postal_code or marketplace_default_postal_code(
+                args.marketplace
+            )
+            if postal_code is None:
+                raise ValidationError(
+                    "selected marketplace has no configured default delivery region"
+                )
             report = asyncio.run(
                 harvester.ensure_capacity(
                     args.marketplace,
-                    args.postal_code,
+                    postal_code,
                     args.target,
                 )
             )
-            _print({"ok": True, "pool": args.pool, "report": asdict(report)})
+            _print(
+                {
+                    "ok": True,
+                    "pool": args.pool,
+                    "postal_selection": {
+                        "postal_code": postal_code,
+                        "source": "explicit"
+                        if args.postal_code
+                        else "marketplace_default",
+                    },
+                    "report": asdict(report),
+                }
+            )
         elif args.command == "cookie-maintain":
             if not args.confirm_external_write:
                 raise ValidationError(

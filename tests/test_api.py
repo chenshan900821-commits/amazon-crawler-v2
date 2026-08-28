@@ -265,7 +265,6 @@ class ApiTests(unittest.TestCase):
         payload = {
             "pool": "default",
             "marketplace_id": "US",
-            "postal_code": "10001",
             "target_count": 2,
             "confirm_external_write": True,
         }
@@ -288,7 +287,6 @@ class ApiTests(unittest.TestCase):
         payload = {
             "pool": "default",
             "marketplace_id": " us ",
-            "postal_code": " 10001 ",
             "target_count": 3,
             "confirm_external_write": False,
         }
@@ -304,6 +302,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(accepted.status_code, 200)
         self.assertTrue(accepted.json()["satisfied"])
         self.assertEqual(harvester.calls, [("US", "10001", 3)])
+        self.assertEqual(
+            accepted.json()["postal_selection"],
+            {"postal_code": "10001", "source": "marketplace_default"},
+        )
         self.assertEqual(accepted.json()["report"]["created"], 2)
         self.assertEqual(accepted.json()["report"]["failure_codes"], ["blocked_page"])
         rendered = accepted.text.lower()
@@ -318,7 +320,6 @@ class ApiTests(unittest.TestCase):
         base = {
             "pool": "default",
             "marketplace_id": "US",
-            "postal_code": "10001",
             "target_count": 1,
             "confirm_external_write": True,
         }
@@ -337,6 +338,40 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(oversized.status_code, 422)
 
+    def test_cookie_fill_allows_operator_override_but_rejects_missing_default(self) -> None:
+        harvester = FakeCookieHarvester()
+        self.application.settings = replace(
+            self.application.settings, cookie_operations_api_enabled=True
+        )
+        self.application.cookie_harvesters["default"] = harvester
+
+        overridden = self.client.post(
+            "/api/v1/cookie-pools/fill",
+            json={
+                "pool": "default",
+                "marketplace_id": "US",
+                "postal_code": " 94105 ",
+                "target_count": 1,
+                "confirm_external_write": True,
+            },
+        )
+        self.assertEqual(overridden.status_code, 200)
+        self.assertEqual(harvester.calls, [("US", "94105", 1)])
+        self.assertEqual(overridden.json()["postal_selection"]["source"], "explicit")
+
+        unsupported = self.client.post(
+            "/api/v1/cookie-pools/fill",
+            json={
+                "pool": "default",
+                "marketplace_id": "EG",
+                "target_count": 1,
+                "confirm_external_write": True,
+            },
+        )
+        self.assertEqual(unsupported.status_code, 422)
+        self.assertIn("no configured default", unsupported.json()["error"]["message"])
+        self.assertEqual(harvester.calls, [("US", "94105", 1)])
+
     def test_all_canonical_kinds_are_registered(self) -> None:
         payload = self.client.get("/api/v1/capabilities").json()
         kinds = {plugin["kind"] for plugin in payload["plugins"]}
@@ -353,6 +388,14 @@ class ApiTests(unittest.TestCase):
             "merchant_home",
             "merchant_products",
         }.issubset(kinds))
+        marketplaces = {market["id"]: market for market in payload["marketplaces"]}
+        self.assertEqual(marketplaces["US"]["default_postal_code"], "10001")
+        self.assertEqual(marketplaces["JP"]["default_postal_code"], "140-0001")
+        self.assertIsNone(marketplaces["EG"]["default_postal_code"])
+        self.assertEqual(
+            sum(bool(market["default_postal_code"]) for market in marketplaces.values()),
+            21,
+        )
         self.assertEqual(payload["result_storage"]["canonical_sink"], "sqlite")
         self.assertIn("jsonl", payload["result_storage"]["configured_sinks"])
         self.assertEqual(payload["retry_defaults"]["ordinary_total_attempts"], 5)
@@ -423,6 +466,10 @@ class ApiTests(unittest.TestCase):
         self.assertIn("available_after", rendered)
         self.assertIn("amazon-crawler serve --host 127.0.0.1 --port 3000", rendered)
         self.assertIn('health.resources.cookie.stale ? "待刷新"', javascript)
+        self.assertIn('id="cookiePostalPreview"', rendered)
+        self.assertNotIn('id="cookiePostalCode"', rendered)
+        self.assertNotIn('$("#cookiePostalCode")', javascript)
+        self.assertIn("market.default_postal_code", javascript)
 
     def test_structured_search_input_preserves_legacy_fields(self) -> None:
         response = self.client.post(

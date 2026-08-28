@@ -178,7 +178,7 @@ curl http://127.0.0.1:3000/api/v1/cookie-pools
 
 ### 第 3 步：仅在需要时获取新 Cookie
 
-方式一：打开 <http://127.0.0.1:3000>，在“Amazon Cookie 资源”区域选择池、站点和邮编，输入目标容量，确认已获外部操作授权后执行。
+方式一：打开 <http://127.0.0.1:3000>，在“Amazon Cookie 资源”区域选择池和站点。系统会自动显示并使用该站点的预设配送区域；只需输入目标容量，确认已获外部操作授权后执行。页面仅展示已经配置默认配送区域的站点，不要求用户手动填写邮编。
 
 方式二：使用命令行调用同一生产内核：
 
@@ -186,10 +186,11 @@ curl http://127.0.0.1:3000/api/v1/cookie-pools
 amazon-crawler cookie-fill \
   --pool default \
   --marketplace US \
-  --postal-code 10001 \
   --target 1 \
   --confirm-external-write
 ```
+
+命令行同样会自动选择站点默认值。只有执行多邮编受控验收时，运维人员才需要使用可选的 `--postal-code` 显式覆盖；普通页面和日常补池不开放这个输入。
 
 **Cookie Gate：只有响应中的 `satisfied=true` 且 `report.available_after >= report.requested` 才表示目标容量已满足。** `created=0` 不一定是失败——当池内原本已经达到目标容量时也会返回 0；反过来，命令正常结束但 `satisfied=false` 仍然不能算成功。未通过该门槛时，先按失败码处理代理或 Amazon 风控，不要假定系统已经拿到新 Cookie。
 
@@ -510,7 +511,7 @@ amazon-crawler worker
 
 ## Cookie 池与 Cookie 生产
 
-Cookie 获取已经是管理界面中的独立功能。它会建立新的 Amazon 匿名会话、设置目标配送邮编、回读页面确认地址生效，并将验证通过的 Cookie 写入 Redis 池。页面只接收资源池、站点、邮编和目标容量，不接收或显示 Cookie、代理凭证、提取链接及 Redis URL。
+Cookie 获取已经是管理界面中的独立功能。它会建立新的 Amazon 匿名会话、根据站点选择预设配送区域、回读页面确认地址生效，并将验证通过的 Cookie 写入 Redis 池。页面只接收资源池、站点和目标容量，不接收或显示 Cookie、代理凭证、提取链接及 Redis URL。
 
 该入口默认关闭。先通过本机 `.env` 或部署平台 Secret 管理配置 Redis 与代理，再显式开启运维入口：
 
@@ -518,7 +519,7 @@ Cookie 获取已经是管理界面中的独立功能。它会建立新的 Amazon
 CRAWLER_COOKIE_OPERATIONS_API_ENABLED=true
 ```
 
-重启服务后，在首页的“Amazon Cookie 资源”区域选择资源池和站点，填写邮编、目标池容量，并勾选外部操作授权确认。页面会返回：本次新建数、拒绝数、当前可用数以及安全失败码，不返回 Cookie 值。单次目标容量上限为 50，同一个池同时只允许一个获取操作。
+重启服务后，在首页的“Amazon Cookie 资源”区域选择资源池和站点。系统会自动展示该站点的配送区域；填写目标池容量并勾选外部操作授权确认即可。页面会返回：实际配送区域、本次新建数、拒绝数、当前可用数以及安全失败码，不返回 Cookie 值。单次目标容量上限为 50，同一个池同时只允许一个获取操作。
 
 若页面显示“运维 API 已关闭”，说明上述开关尚未开启；若显示“未配置 Redis 池”，说明 `CRAWLER_COOKIE_REDIS_URL` 和 `CRAWLER_COOKIE_REDIS_OVERSEAS_URL` 均未形成可用的 Cookie 生产池。默认 `CRAWLER_COOKIE_HARVEST_REQUIRE_PROXY=true`，没有可用代理时会安全失败，不会悄悄改为直连。
 
@@ -527,12 +528,11 @@ CRAWLER_COOKIE_OPERATIONS_API_ENABLED=true
 ```bash
 amazon-crawler cookie-fill \
   --marketplace US \
-  --postal-code 10001 \
   --target 10 \
   --confirm-external-write
 ```
 
-为 `product_hw` 或 JP 链路补充 overseas 池时增加 `--pool overseas`。Cookie 生产会向 Amazon 发起请求，并向配置的 Cookie Redis 写入带 TTL 的数据；只有在确认站点访问和 Redis 写入均获授权后才能执行。
+为 `product_hw` 或 JP 链路补充 overseas 池时增加 `--pool overseas`。普通补池无需 `--postal-code`；多邮编受控验收可显式覆盖。Cookie 生产会向 Amazon 发起请求，并向配置的 Cookie Redis 写入带 TTL 的数据；只有在确认站点访问和 Redis 写入均获授权后才能执行。
 
 生产链会建立首页会话、设置配送地址、重新加载页面确认邮编，再补充 locale/currency。只有验证通过的 Cookie 才会写入池。更严格的 US/JP 双站点受控验收流程见 [`docs/CONTROLLED_ACCEPTANCE.md`](docs/CONTROLLED_ACCEPTANCE.md)。
 

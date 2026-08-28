@@ -53,6 +53,34 @@ MARKETPLACE_COOKIE_ALIASES = {
     market.id: market.amazon_marketplace_id for market in MARKETPLACES.values()
 }
 
+# One deterministic delivery region per marketplace for the operator-facing
+# Cookie acquisition flow. These values preserve the first operational choice
+# from the existing site configuration. Marketplaces without a configured,
+# exercised value are intentionally omitted instead of receiving a guessed one.
+MARKETPLACE_DEFAULT_POSTAL_CODES = {
+    "US": "10001",
+    "CA": "J0N 1P0",
+    "MX": "45645",
+    "BR": "18680-693",
+    "UK": "EC1A 1HQ",
+    "DE": "16515",
+    "FR": "75000",
+    "IT": "10040",
+    "ES": "28001",
+    "NL": "1079",
+    "SE": "413 08",
+    "PL": "21-030",
+    "BE": "1050",
+    "IE": "D02 R5Y3",
+    "ZA": "Johannesburg",
+    "JP": "140-0001",
+    "AU": "2000",
+    "SG": "699010",
+    "AE": "Dubai",
+    "SA": "Riyadh",
+    "TR": "34000",
+}
+
 MARKETPLACE_LANGUAGES = {
     "CA": "en_CA",
     "US": "en_US",
@@ -124,13 +152,22 @@ def merchant_language(marketplace_code: str) -> str:
     return "en_AE" if marketplace_code in {"EG", "AE"} else "en"
 
 
-def public_marketplaces() -> list[dict[str, str]]:
+def marketplace_default_postal_code(marketplace_id: str) -> str | None:
+    normalized = marketplace_id.strip().upper()
+    market = MARKETPLACES.get(normalized) or AMAZON_ID_TO_MARKETPLACE.get(normalized)
+    if market is None:
+        return None
+    return MARKETPLACE_DEFAULT_POSTAL_CODES.get(market.id)
+
+
+def public_marketplaces() -> list[dict[str, str | None]]:
     return [
         {
             "id": market.id,
             "name": market.name,
             "domain": market.domain,
             "amazon_marketplace_id": market.amazon_marketplace_id,
+            "default_postal_code": MARKETPLACE_DEFAULT_POSTAL_CODES.get(market.id),
         }
         for market in MARKETPLACES.values()
     ]
