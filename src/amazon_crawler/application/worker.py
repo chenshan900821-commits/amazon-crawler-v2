@@ -55,9 +55,19 @@ class Worker:
         self.worker_id = worker_id or f"worker_{uuid.uuid4().hex[:12]}"
         self._stop = asyncio.Event()
 
-    async def process_one(self, slot: int = 0) -> bool:
+    async def process_one(
+        self,
+        slot: int = 0,
+        *,
+        job_id: str | None = None,
+    ) -> bool:
         owner = f"{self.worker_id}:{slot}"
-        item = await asyncio.to_thread(self.store.claim_next, owner, self.lease_seconds)
+        item = await asyncio.to_thread(
+            self.store.claim_next,
+            owner,
+            self.lease_seconds,
+            job_id,
+        )
         if not item:
             return False
         heartbeat_stop = asyncio.Event()
@@ -116,10 +126,15 @@ class Worker:
                 if not retained:
                     return
 
-    async def run_until_idle(self, *, max_items: int | None = None) -> int:
+    async def run_until_idle(
+        self,
+        *,
+        max_items: int | None = None,
+        job_id: str | None = None,
+    ) -> int:
         processed = 0
         while max_items is None or processed < max_items:
-            if not await self.process_one(0):
+            if not await self.process_one(0, job_id=job_id):
                 break
             processed += 1
         return processed

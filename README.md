@@ -88,7 +88,18 @@ curl http://127.0.0.1:3000/api/v1/capabilities
 
 ### 3B. 完全不使用页面
 
-创建一个商品任务。示例 ASIN 必须替换成目标商品 `/dp/` 后真实的 10 位 ASIN：
+直接创建并执行一个商品任务。`run` 会在当前进程启动临时 Worker，只处理这个根任务及其自动派生的子任务链；整条任务链到达终态后返回结果并自动退出，不需要先启动页面、API 或常驻 Worker。示例 ASIN 必须替换成目标商品 `/dp/` 后真实的 10 位 ASIN：
+
+```bash
+amazon-crawler run B07FZ8S74R \
+  --kind product \
+  --marketplace US \
+  --postal-code 10001
+```
+
+`run` 只领取它自己创建或命中的幂等根任务及其派生任务，不会顺手执行数据库中其他等待任务。它返回的 `runner.started=true` 表示临时 Worker 已启动，`runner.stopped_reason=terminal` 表示任务链已到终态；最终应检查 `lineage_status`、`jobs` 和 `results`。
+
+如果只想把任务放入已有的常驻部署，不等待执行，使用队列模式：
 
 ```bash
 amazon-crawler create B07FZ8S74R \
@@ -97,13 +108,7 @@ amazon-crawler create B07FZ8S74R \
   --postal-code 10001
 ```
 
-如果没有运行 `serve` 或常驻 Worker，再执行一轮队列：
-
-```bash
-amazon-crawler worker --once
-```
-
-`worker --once` 会处理当前可领取的抓取任务和结果投递，然后退出。长期无人值守运行使用：
+这时必须已经运行 `serve` 或常驻 Worker。手工处理当前整个队列可以执行 `amazon-crawler worker --once`；它与 `run` 不同，会处理其他可领取任务。长期无人值守运行使用：
 
 ```bash
 amazon-crawler worker
@@ -139,12 +144,13 @@ SQLite 标准结果保存在 `.data/crawler.db`；选择 `jsonl` 结果去向后
 
 在前台进程中按 `Ctrl+C` 安全停止。再次打开终端后，重新加载 `.env`，然后运行 `amazon-crawler serve` 或 `amazon-crawler worker`。任务状态和断点保存在 SQLite 中；Worker 会恢复可继续处理的任务，不要求浏览器保持打开。
 
-## 三种运行方式
+## 四种运行方式
 
 | 方式 | 启动命令 | 谁创建任务 | 适用场景 |
 |---|---|---|---|
 | 页面与 Worker 一体 | `amazon-crawler serve` | 页面、CLI 或 API | 本地使用、单机受控部署 |
-| 纯命令行单次运行 | `amazon-crawler create ...` 后执行 `amazon-crawler worker --once` | CLI | 脚本、批处理、调试 |
+| 单任务自包含运行 | `amazon-crawler run ...` | CLI 或 Agent Skill | 一次请求直接拿结果，不依赖预启动服务 |
+| 纯命令行队列运行 | `amazon-crawler create ...` 后执行 `amazon-crawler worker --once` | CLI | 批处理整个当前队列 |
 | 常驻 Worker | `amazon-crawler worker` | CLI、API 或外部调度器 | 无页面、定时或持续运行 |
 
 ## 使用 Agent Skill
@@ -157,7 +163,9 @@ SQLite 标准结果保存在 `.data/crawler.db`；选择 `jsonl` 结果去向后
 $operate-amazon-crawler 为 US 站点创建一个已获授权的商品采集任务，并报告任务状态和结果数量。
 ```
 
-Agent Skill 只允许创建、查看、暂停、恢复、取消以及读取任务证据，不允许启动 Worker、生产 Cookie、修改代理或接收数据库路径。调用 Skill 之前，运维人员必须已经运行以下任一种执行进程：
+Agent Skill 默认使用 `run`：完成配置检查后，创建任务、启动只处理该任务的临时 Worker、等待终态、处理该任务的结果投递并返回结果，然后自动退出。因此普通 Agent 采集不要求用户预先启动网页、API 或常驻 Worker。
+
+Skill 不会启动网页/API、全局常驻 Worker、Cookie 生产或 Cookie 维护，也不接收数据库路径、Cookie 或代理秘密。只有用户明确要求“放入已有部署异步执行”时才使用 queue-only `create`；这时运维人员必须已经运行以下任一种执行进程：
 
 ```bash
 amazon-crawler serve
@@ -165,15 +173,17 @@ amazon-crawler serve
 amazon-crawler worker
 ```
 
-两者必须与 Skill 使用相同的 `CRAWLER_DB_PATH`。`create` 返回 `created: true` 只表示任务已经持久化；继续用 `show` 确认它从 `pending` 进入 `running` 或终态。如果一直是 `pending`，先检查 Worker，不要反复创建相同任务。
+两者必须与 Skill 使用相同的 `CRAWLER_DB_PATH`。queue-only `create` 返回 `created: true` 只表示任务已经持久化；继续用 `show` 确认它从 `pending` 进入 `running` 或终态。如果一直是 `pending`，先检查常驻 Worker，不要反复创建相同任务。
 
-Skill 每次创建任务前都会先做与 `amazon-crawler doctor` 相同的脱敏检查。缺少 Cookie 来源、代理字段只填一半或 URL 格式明显错误时，它不会创建任务，而会返回 `blocking_issues`，其中只包含需要配置的环境变量名和操作说明。用户应在项目根目录 `.env` 或部署平台 Secret 中填写真实值，再加载配置；不要把 Cookie、提取链接、账号密码或 Redis URL 发给 Agent。
+Skill 包装脚本会安全读取项目根目录 `.env` 中的 `CRAWLER_*` 字段，不会把 `.env` 当 Shell 脚本执行，显式进程环境变量优先。因此通过 Skill 使用时不要求用户预先执行 `source .env`。每次执行任务前仍会做与 `amazon-crawler doctor` 相同的脱敏检查；缺少 Cookie 来源、代理字段只填一半或 URL 格式明显错误时，它不会创建任务，而会返回 `blocking_issues`。用户只需在 `.env` 或部署平台 Secret 中补齐真实值，再让 Skill 重试；不要把 Cookie、提取链接、账号密码或 Redis URL 发给 Agent。
 
 不依赖 Agent 界面时，可以直接验证 Skill 的确定性包装脚本：
 
 ```bash
 python skills/operate-amazon-crawler/scripts/crawler_cli.py doctor
 python skills/operate-amazon-crawler/scripts/crawler_cli.py capabilities
+python skills/operate-amazon-crawler/scripts/crawler_cli.py run B0XXXXXXXX --marketplace US
+# 仅在已有常驻 Worker 时使用 queue-only create：
 python skills/operate-amazon-crawler/scripts/crawler_cli.py create B0XXXXXXXX --marketplace US
 python skills/operate-amazon-crawler/scripts/crawler_cli.py show JOB_ID
 python skills/operate-amazon-crawler/scripts/crawler_cli.py results JOB_ID

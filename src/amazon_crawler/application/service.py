@@ -142,6 +142,7 @@ class CrawlerService:
             "agent_safe_operations": [
                 "doctor",
                 "capabilities",
+                "run",
                 "create",
                 "list",
                 "show",

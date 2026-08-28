@@ -30,10 +30,18 @@ class DeliveryWorker:
         self.worker_id = worker_id or f"delivery_{uuid.uuid4().hex[:12]}"
         self._stop = asyncio.Event()
 
-    async def process_one(self, slot: int = 0) -> bool:
+    async def process_one(
+        self,
+        slot: int = 0,
+        *,
+        job_id: str | None = None,
+    ) -> bool:
         owner = f"{self.worker_id}:{slot}"
         delivery = await asyncio.to_thread(
-            self.store.claim_delivery, owner, self.lease_seconds
+            self.store.claim_delivery,
+            owner,
+            self.lease_seconds,
+            job_id,
         )
         if delivery is None:
             return False
@@ -77,10 +85,15 @@ class DeliveryWorker:
                 if not retained:
                     return
 
-    async def run_until_idle(self, *, max_deliveries: int | None = None) -> int:
+    async def run_until_idle(
+        self,
+        *,
+        max_deliveries: int | None = None,
+        job_id: str | None = None,
+    ) -> int:
         processed = 0
         while max_deliveries is None or processed < max_deliveries:
-            if not await self.process_one(0):
+            if not await self.process_one(0, job_id=job_id):
                 break
             processed += 1
         return processed

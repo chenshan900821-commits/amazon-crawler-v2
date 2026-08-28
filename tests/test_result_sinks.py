@@ -100,14 +100,18 @@ class ResultSinkTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         self.tempdir.cleanup()
 
-    def _completed_job(self, sink_names: list[str]) -> tuple[str, ClaimedDelivery | None]:
+    def _completed_job(
+        self,
+        sink_names: list[str],
+        asin: str = "B000000001",
+    ) -> tuple[str, ClaimedDelivery | None]:
         service = CrawlerService(
             self.store,
             self.registry,
             result_sinks={"sqlite", "jsonl", "exploding"},
         )
         job, _ = service.create_job(
-            inputs=["B000000001"],
+            inputs=[asin],
             marketplace_id="US",
             options={"result_sinks": sink_names},
         )
@@ -167,6 +171,32 @@ class ResultSinkTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(os.stat(self.root / "jsonl").st_mode & 0o777, 0o700)
         self.assertEqual(os.stat(self.root / "jsonl" / ".receipts").st_mode & 0o777, 0o700)
         self.assertEqual(os.stat(record_file).st_mode & 0o777, 0o600)
+
+    async def test_job_scoped_delivery_does_not_consume_other_outbox_rows(self) -> None:
+        other_job_id, _ = self._completed_job(["jsonl"], "B000000001")
+        target_job_id, _ = self._completed_job(["jsonl"], "B000000002")
+        sinks = ResultSinkRegistry([JsonlResultSink(self.root / "jsonl-scoped")])
+        worker = DeliveryWorker(
+            store=self.store,
+            sinks=sinks,
+            lease_seconds=15,
+            poll_seconds=0.01,
+            concurrency=1,
+            worker_id="scoped-delivery-worker",
+        )
+
+        self.assertEqual(
+            await worker.run_until_idle(job_id=target_job_id),
+            1,
+        )
+        self.assertEqual(
+            self.store.list_deliveries(target_job_id)[0]["status"],
+            "delivered",
+        )
+        self.assertEqual(
+            self.store.list_deliveries(other_job_id)[0]["status"],
+            "pending",
+        )
 
     async def test_jsonl_sink_refuses_symlinked_result_and_receipt_targets(self) -> None:
         external = self.root / "external.txt"

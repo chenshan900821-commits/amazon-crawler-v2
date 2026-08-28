@@ -28,6 +28,12 @@ Report:
 
 Never describe `created: false` as a failure: it means the idempotency key matched an existing task.
 
+## Runner ownership
+
+`run` owns a temporary in-process Worker scoped to the returned root `job.id` and follow-up jobs created by that lineage. It may execute and deliver only IDs listed in `runner.scoped_job_ids`, then exits. Verify `runner.mode=job_scoped_in_process_worker`, `runner.started=true`, `runner.consumed_other_jobs=false`, `runner.stopped_reason=terminal`, and terminal states for every entry in `jobs` before reporting normal completion.
+
+`create` is queue-only. It persists the task but starts no Worker. Use it only when the user explicitly wants managed asynchronous execution; otherwise prefer `run`.
+
 ## Result delivery
 
 `sqlite` is the canonical result and checkpoint store. Optional sinks use a durable outbox after that canonical commit:

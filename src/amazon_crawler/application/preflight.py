@@ -136,8 +136,9 @@ def configuration_report(settings: Settings) -> dict[str, Any]:
         next_steps.extend(
             [
                 "编辑项目根目录 .env，只填写检查结果列出的环境变量。",
-                "在当前终端执行：set -a; source .env; set +a",
-                "重新运行 amazon-crawler doctor；Agent Skill 则重新运行 doctor 后再 create。",
+                "Agent Skill 会在下次调用时自动重读 .env；不要把秘密值发到对话中。",
+                "直接使用 CLI 时执行：set -a; source .env; set +a",
+                "重新运行 doctor，通过后再 run；队列模式才使用 create。",
             ]
         )
     else:

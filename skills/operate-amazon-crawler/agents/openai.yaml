@@ -1,4 +1,4 @@
 interface:
   display_name: "Operate Amazon Crawler"
-  short_description: "Safely operate resumable Amazon dataset crawls"
-  default_prompt: "Use $operate-amazon-crawler to create or inspect a supported Amazon dataset crawl."
+  short_description: "Run resumable Amazon dataset crawls end to end"
+  default_prompt: "Use $operate-amazon-crawler to run a supported Amazon dataset crawl to completion and report its evidence."

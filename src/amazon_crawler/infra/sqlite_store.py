@@ -438,7 +438,12 @@ class SQLiteStore:
                 self._refresh_job(connection, row["id"], force_status="cancelled")
                 self._event(connection, row["id"], "job.cancelled")
 
-    def claim_next(self, worker_id: str, lease_seconds: int) -> ClaimedItem | None:
+    def claim_next(
+        self,
+        worker_id: str,
+        lease_seconds: int,
+        job_id: str | None = None,
+    ) -> ClaimedItem | None:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._recover_expired(connection)
@@ -452,10 +457,11 @@ class SQLiteStore:
                 WHERE i.status = 'pending'
                   AND i.available_at <= ?
                   AND j.status IN ('pending', 'running')
+                  AND (? IS NULL OR i.job_id = ?)
                 ORDER BY j.priority DESC, j.created_at, i.seq
                 LIMIT 1
                 """,
-                (now,),
+                (now, job_id, job_id),
             ).fetchone()
             if not row:
                 connection.commit()
@@ -644,6 +650,7 @@ class SQLiteStore:
         options = {
             "parent_job_id": parent.job_id,
             "parent_item_id": parent.id,
+            "root_job_id": parent.options.get("root_job_id") or parent.job_id,
             "followup_reason": followup.reason,
         }
         if parent.options.get("result_sinks"):
@@ -938,7 +945,10 @@ class SQLiteStore:
         return recovered
 
     def claim_delivery(
-        self, worker_id: str, lease_seconds: int
+        self,
+        worker_id: str,
+        lease_seconds: int,
+        job_id: str | None = None,
     ) -> ClaimedDelivery | None:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -954,10 +964,11 @@ class SQLiteStore:
                 WHERE o.status = 'pending'
                   AND o.available_at <= ?
                   AND o.attempts < o.max_attempts
+                  AND (? IS NULL OR o.job_id = ?)
                 ORDER BY o.created_at, o.id
                 LIMIT 1
                 """,
-                (now,),
+                (now, job_id, job_id),
             ).fetchone()
             if not row:
                 connection.commit()

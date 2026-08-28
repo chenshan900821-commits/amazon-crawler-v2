@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +30,7 @@ class AgentSkillTests(unittest.TestCase):
         }
         environment["CRAWLER_DB_PATH"] = str(db_path)
         environment["CRAWLER_WORKER_ENABLED"] = "false"
+        environment["CRAWLER_SKILL_SKIP_DOTENV"] = "true"
         environment["CRAWLER_AMAZON_COOKIE"] = (
             "session-id=AGENT_SKILL_TEST_SECRET"
         )
@@ -70,8 +72,9 @@ class AgentSkillTests(unittest.TestCase):
         )
         self.assertTrue(skill.startswith("---\nname: operate-amazon-crawler\n"))
         self.assertIn("description:", skill.split("---", 2)[1])
-        self.assertIn("deployment Worker prerequisite", skill)
-        self.assertIn("Always run `doctor` before `create`", skill)
+        self.assertIn("scoped Worker", skill)
+        self.assertIn("Always run `doctor` before `run` or `create`", skill)
+        self.assertIn("Use `run` by default", skill)
         self.assertIn("data.row_count", skill)
         self.assertIn("$operate-amazon-crawler", metadata)
 
@@ -91,6 +94,40 @@ class AgentSkillTests(unittest.TestCase):
             "legacy-sync-state",
         }
         self.assertTrue(forbidden.isdisjoint(module.ALLOWED_COMMANDS))
+
+    def test_wrapper_loads_only_missing_crawler_values_from_project_dotenv(self) -> None:
+        spec = importlib.util.spec_from_file_location("crawler_skill_wrapper", WRAPPER)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            (root / ".env").write_text(
+                "\n".join(
+                    (
+                        "CRAWLER_AMAZON_COOKIE='session-id=TEST VALUE'",
+                        "CRAWLER_HTTP_PROXY='http://file-proxy.invalid:8080'",
+                        "UNRELATED_VALUE='must-not-load'",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {"CRAWLER_HTTP_PROXY": "http://explicit-proxy.invalid:8081"},
+                clear=True,
+            ):
+                self.assertTrue(module.load_project_dotenv(root))
+                self.assertEqual(
+                    os.environ["CRAWLER_AMAZON_COOKIE"],
+                    "session-id=TEST VALUE",
+                )
+                self.assertEqual(
+                    os.environ["CRAWLER_HTTP_PROXY"],
+                    "http://explicit-proxy.invalid:8081",
+                )
+                self.assertNotIn("UNRELATED_VALUE", os.environ)
 
     def test_wrapper_allowlist_matches_published_agent_capabilities(self) -> None:
         spec = importlib.util.spec_from_file_location("crawler_skill_wrapper", WRAPPER)
@@ -182,6 +219,21 @@ class AgentSkillTests(unittest.TestCase):
             refused_report = json.loads(refused.stdout)
             self.assertEqual(
                 refused_report["error"]["type"],
+                "MissingConfiguration",
+            )
+            self.assertFalse(db_path.exists())
+
+            refused_run = self._run(
+                db_path,
+                "run",
+                "B000000001",
+                "--marketplace",
+                "US",
+                environment=missing_cookie,
+            )
+            self.assertEqual(refused_run.returncode, 2)
+            self.assertEqual(
+                json.loads(refused_run.stdout)["error"]["type"],
                 "MissingConfiguration",
             )
             self.assertFalse(db_path.exists())

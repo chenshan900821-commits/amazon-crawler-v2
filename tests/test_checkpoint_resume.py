@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from types import SimpleNamespace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from amazon_crawler.application.service import CrawlerService
 from amazon_crawler.application.worker import Worker, _public_failure_details
+from amazon_crawler.interfaces.cli import _run_scoped_job
 from amazon_crawler.domain.errors import ConflictError
 from amazon_crawler.domain.models import (
     CrawlResult,
@@ -90,6 +92,15 @@ class FakeDiscoveryPlugin:
 class ExplodingProductPlugin(FakeProductPlugin):
     async def execute(self, item):
         raise RuntimeError("cookie=session-secret; proxy=http://user:pass@host")
+
+
+class NoopDeliveryWorker:
+    def __init__(self) -> None:
+        self.job_ids: list[str] = []
+
+    async def run_until_idle(self, *, job_id=None, **_kwargs) -> int:
+        self.job_ids.append(job_id)
+        return 0
 
 
 class ResumeTests(unittest.IsolatedAsyncioTestCase):
@@ -196,6 +207,99 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(completed["status"], "succeeded")
         self.assertEqual(completed["checkpoint_seq"], 3)
         self.assertEqual(len(reopened_store.list_results(job["id"])), 3)
+
+    async def test_job_scoped_worker_does_not_consume_other_queued_jobs(self) -> None:
+        other, _ = self.service.create_job(
+            inputs=["B000000001"],
+            marketplace_id="US",
+            priority=100,
+        )
+        target, _ = self.service.create_job(
+            inputs=["B000000002"],
+            marketplace_id="US",
+            priority=-100,
+        )
+
+        processed = await self.worker().run_until_idle(job_id=target["id"])
+
+        self.assertEqual(processed, 1)
+        self.assertEqual(self.store.get_job(target["id"])["status"], "succeeded")
+        self.assertEqual(self.store.get_job(other["id"])["status"], "pending")
+        self.assertEqual(self.plugin.calls, ["B000000002"])
+
+    async def test_scoped_runner_starts_worker_and_returns_terminal_result(self) -> None:
+        job, _ = self.service.create_job(
+            inputs=["B000000003"],
+            marketplace_id="US",
+        )
+        delivery_worker = NoopDeliveryWorker()
+        app = SimpleNamespace(
+            store=self.store,
+            worker=self.worker(),
+            delivery_worker=delivery_worker,
+            settings=SimpleNamespace(poll_seconds=0.01),
+        )
+
+        report = await _run_scoped_job(
+            app,
+            job["id"],
+            timeout_seconds=10,
+        )
+
+        self.assertTrue(report["completed"])
+        self.assertEqual(report["job"]["status"], "succeeded")
+        self.assertEqual(len(report["results"]), 1)
+        self.assertEqual(report["runner"]["stopped_reason"], "terminal")
+        self.assertTrue(report["runner"]["started"])
+        self.assertFalse(report["runner"]["consumed_other_jobs"])
+        self.assertEqual(delivery_worker.job_ids, [job["id"]])
+
+    async def test_scoped_runner_follows_child_jobs_but_not_unrelated_jobs(self) -> None:
+        discovery = FakeDiscoveryPlugin()
+        registry = PluginRegistry([discovery, self.plugin])
+        service = CrawlerService(self.store, registry)
+        unrelated, _ = service.create_job(
+            kind="amazon.product",
+            inputs=["B000000088"],
+            marketplace_id="US",
+            priority=100,
+        )
+        parent, _ = service.create_job(
+            kind="merchant_home",
+            inputs=["SELLER123"],
+            marketplace_id="US",
+            priority=-100,
+        )
+        delivery_worker = NoopDeliveryWorker()
+        app = SimpleNamespace(
+            store=self.store,
+            worker=Worker(
+                store=self.store,
+                plugins=registry,
+                lease_seconds=15,
+                poll_seconds=0.01,
+                concurrency=1,
+                worker_id="lineage-worker",
+            ),
+            delivery_worker=delivery_worker,
+            settings=SimpleNamespace(poll_seconds=0.01),
+        )
+
+        report = await _run_scoped_job(
+            app,
+            parent["id"],
+            timeout_seconds=10,
+        )
+
+        self.assertTrue(report["completed"])
+        self.assertEqual(report["lineage_status"], "succeeded")
+        self.assertEqual(len(report["jobs"]), 2)
+        self.assertTrue(all(job["status"] == "succeeded" for job in report["jobs"]))
+        self.assertEqual(len(report["runner"]["scoped_job_ids"]), 2)
+        self.assertEqual(self.store.get_job(unrelated["id"])["status"], "pending")
+        child = next(job for job in report["jobs"] if job["id"] != parent["id"])
+        self.assertEqual(child["options"]["root_job_id"], parent["id"])
+        self.assertEqual(self.plugin.calls, ["B000000099"])
 
     async def test_expired_lease_is_recovered_and_stale_result_is_rejected(self) -> None:
         job, _ = self.service.create_job(inputs=["B000000001"], marketplace_id="US")

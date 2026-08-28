@@ -86,7 +86,12 @@ class StateStore(Protocol):
 
     def list_results(self, job_id: str, *, limit: int = 100) -> list[dict[str, Any]]: ...
 
-    def claim_next(self, worker_id: str, lease_seconds: int) -> ClaimedItem | None: ...
+    def claim_next(
+        self,
+        worker_id: str,
+        lease_seconds: int,
+        job_id: str | None = None,
+    ) -> ClaimedItem | None: ...
 
     def heartbeat(self, item: ClaimedItem, lease_seconds: int) -> bool: ...
 
@@ -111,7 +116,10 @@ class StateStore(Protocol):
     def recover_expired_leases(self) -> int: ...
 
     def claim_delivery(
-        self, worker_id: str, lease_seconds: int
+        self,
+        worker_id: str,
+        lease_seconds: int,
+        job_id: str | None = None,
     ) -> ClaimedDelivery | None: ...
 
     def heartbeat_delivery(
