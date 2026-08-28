@@ -133,7 +133,7 @@
               <span><b>我确认本次外部操作已获授权</b><small>将向 Amazon 发起请求，并向所选 Redis Cookie 池写入带 TTL 的会话数据。</small></span>
             </label>
             <p class="form-note">配送区域由站点配置自动选择，无需手动填写。同一个池同时只执行一个获取操作；单次目标上限为 50。该能力只属于人工运维控制面，不向 AI Agent Skill 开放。</p>
-            <button class="primary" id="cookieFillButton" type="submit" disabled><span>开始获取 Cookie</span><b>→</b></button>
+            <button class="primary" id="cookieFillButton" type="submit" aria-busy="false" disabled><span>开始获取 Cookie</span><b>→</b></button>
             <div class="cookie-result" id="cookieFillResult" role="status" aria-live="polite">尚未执行获取操作</div>
           </form>
         </div>

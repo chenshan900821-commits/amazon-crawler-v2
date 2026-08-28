@@ -470,6 +470,12 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn('id="cookiePostalCode"', rendered)
         self.assertNotIn('$("#cookiePostalCode")', javascript)
         self.assertIn("market.default_postal_code", javascript)
+        self.assertIn('button.classList.toggle("running", state.cookieRunning)', javascript)
+        self.assertIn('button.setAttribute("aria-busy", String(state.cookieRunning))', javascript)
+        self.assertIn("确认授权后获取 Cookie", javascript)
+        self.assertIn("Promise.allSettled", javascript)
+        self.assertIn("cursor: not-allowed", self.client.get("/assets/styles.css").text)
+        self.assertIn("cursor: progress", self.client.get("/assets/styles.css").text)
 
     def test_structured_search_input_preserves_legacy_fields(self) -> None:
         response = self.client.post(

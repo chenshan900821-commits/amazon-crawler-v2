@@ -81,7 +81,16 @@ function updateCookieButton() {
   const configured = state.cookiePools.some(pool => pool.configured);
   const selected = state.marketplaces.find(market => market.id === $("#cookieMarketplace").value);
   const enabled = Boolean(state.cookieFeature?.api_enabled && configured);
-  $("#cookieFillButton").disabled = !enabled || !selected?.default_postal_code || !$("#cookieConfirm").checked || state.cookieRunning;
+  const button = $("#cookieFillButton");
+  button.disabled = !enabled || !selected?.default_postal_code || !$("#cookieConfirm").checked || state.cookieRunning;
+  button.classList.toggle("running", state.cookieRunning);
+  button.setAttribute("aria-busy", String(state.cookieRunning));
+  button.querySelector("span").textContent = state.cookieRunning
+    ? "正在获取 Cookie"
+    : enabled && selected?.default_postal_code && !$("#cookieConfirm").checked
+      ? "确认授权后获取 Cookie"
+      : "开始获取 Cookie";
+  button.querySelector("b").textContent = state.cookieRunning ? "···" : "→";
   $("#cookiePool").disabled = !enabled || state.cookieRunning;
 }
 
@@ -307,7 +316,8 @@ $("#cookieFillForm").addEventListener("submit", async event => {
     toast(error.message, true);
   } finally {
     state.cookieRunning = false;
-    await Promise.all([loadCookieResources(), loadResourceHealth()]);
+    updateCookieButton();
+    await Promise.allSettled([loadCookieResources(), loadResourceHealth()]);
     updateCookieButton();
   }
 });
