@@ -124,6 +124,129 @@ python -m amazon_crawler init-db
 python -m amazon_crawler serve --host 127.0.0.1 --port 3000
 ```
 
+## 一次完整可运行流程
+
+下面是一条从“运行资源就绪”到“拿到并检查结果”的主路径。首次使用建议按顺序执行，不要把“服务已启动”“Cookie 获取请求已结束”误认为真实采集已经成功。
+
+### 第 1 步：准备本机配置
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+在 `.env` 中选择一种已获授权的 Cookie 来源：
+
+| Cookie 来源 | 适用情况 | 必须配置 |
+|---|---|---|
+| Redis Cookie 池（推荐） | 已有多个站点/邮编会话，或需要持续补充会话 | `CRAWLER_COOKIE_REDIS_URL`；海外池另配 `CRAWLER_COOKIE_REDIS_OVERSEAS_URL` |
+| 静态 Cookie | 单站点、单会话的受控联调 | `CRAWLER_AMAZON_COOKIE` |
+| 新 Cookie 获取 | 需要创建匿名配送区域会话并写入 Redis | Redis Cookie 池、可用代理、`CRAWLER_COOKIE_OPERATIONS_API_ENABLED=true` |
+
+动态代理使用 `CRAWLER_PROXY_EXTRACT_URL`，固定代理使用 `CRAWLER_HTTP_PROXY`。真实值只放在本机 `.env` 或部署平台 Secret 管理中；不要通过页面、Job API 或 Agent 参数传入。字段含义和示例见下一节“配置真实抓取资源”。
+
+加载配置并初始化：
+
+```bash
+source .venv/bin/activate
+set -a
+source .env
+set +a
+amazon-crawler init-db
+```
+
+### 第 2 步：启动并检查能力
+
+```bash
+amazon-crawler serve --host 127.0.0.1 --port 3000
+```
+
+保持服务运行，在另一个已经加载同一份 `.env` 的终端检查：
+
+```bash
+curl http://127.0.0.1:3000/api/v1/health
+curl http://127.0.0.1:3000/api/v1/capabilities
+curl http://127.0.0.1:3000/api/v1/cookie-pools
+```
+
+继续执行真实采集前，应确认：
+
+- `/health` 返回 `ok: true`。
+- `/capabilities` 中包含准备执行的任务类型和结果去向。
+- 使用 Cookie 获取功能时，`/cookie-pools` 的 `feature.api_enabled` 为 `true`，目标池的 `configured` 为 `true`，并且 `tls_impersonation` 为 `true`。
+- 首页“健康 Cookie”显示的是当前服务进程已经加载到缓存中的安全计数；显示“待刷新”表示 Worker 尚未读取资源池，不代表 Redis 中一定没有 Cookie。已确认池内有可用 Cookie 时，不需要先生产新 Cookie，可以直接创建采集任务并从任务事件验证资源领取结果。
+
+### 第 3 步：仅在需要时获取新 Cookie
+
+方式一：打开 <http://127.0.0.1:3000>，在“Amazon Cookie 资源”区域选择池、站点和邮编，输入目标容量，确认已获外部操作授权后执行。
+
+方式二：使用命令行调用同一生产内核：
+
+```bash
+amazon-crawler cookie-fill \
+  --pool default \
+  --marketplace US \
+  --postal-code 10001 \
+  --target 1 \
+  --confirm-external-write
+```
+
+**Cookie Gate：只有响应中的 `satisfied=true` 且 `report.available_after >= report.requested` 才表示目标容量已满足。** `created=0` 不一定是失败——当池内原本已经达到目标容量时也会返回 0；反过来，命令正常结束但 `satisfied=false` 仍然不能算成功。未通过该门槛时，先按失败码处理代理或 Amazon 风控，不要假定系统已经拿到新 Cookie。
+
+### 第 4 步：创建真实采集任务
+
+首页可直接选择“关键词搜索”，填写 `wireless mouse`、站点 `US`、邮编 `10001` 后创建。对应的命令行是：
+
+```bash
+amazon-crawler create \
+  --kind search \
+  --input-json '{"keyword":"wireless mouse","market_id":"US","post_code":"10001","turn_page":1,"frequent":0}'
+```
+
+商品任务需要把示例 ASIN 替换为真实的 10 位 ASIN：
+
+```bash
+amazon-crawler create B07FZ8S74R \
+  --kind product \
+  --marketplace US \
+  --postal-code 10001
+```
+
+`serve` 默认已包含 Worker，会自动领取任务。如果 API 与 Worker 分开运行，或者只希望执行一轮队列，则运行：
+
+```bash
+amazon-crawler worker --once
+```
+
+### 第 5 步：查看状态、证据与结果
+
+创建命令返回的任务编号位于 `job.id`。把它填入下面的本地变量：
+
+```bash
+JOB_ID='JOB_ID_FROM_CREATE_RESPONSE'
+amazon-crawler show "$JOB_ID"
+amazon-crawler events "$JOB_ID"
+amazon-crawler results "$JOB_ID"
+amazon-crawler deliveries "$JOB_ID"
+```
+
+也可以在首页任务编队中打开任务详情，查看逐项状态、失败码、事件、结果、字段覆盖率以及脱敏证据哈希。
+
+**Result Gate：任务状态为 `succeeded` 且结果数量大于 0，才表示全部输入已完成；`partial` 表示已有可用结果，但仍需查看失败输入和事件；`failed` 或结果数量为 0 时不能进入下游业务。** SQLite 标准结果位于 `.data/crawler.db`，启用 `jsonl` 去向后，增量文件位于 `.data/result-sinks/jsonl`。
+
+### 失败码怎么判断
+
+| 失败码 | 含义 | 优先处理 |
+|---|---|---|
+| `proxy_acquisition_failed` | 动态代理提取接口不可用、响应格式错误或没有有效端口 | 检查提取链接、线路状态、IP 白名单和服务商返回格式 |
+| `proxy_unavailable` | 当前没有可用代理，且策略禁止静默直连 | 补充代理资源或等待隔离时间结束；不要为“跑通”而关闭代理门槛 |
+| `blocked` | Amazon 返回验证码、风控页或其他拦截页面 | 降低频率、替换健康代理并重新获取会话 |
+| `missing_csrf_token` / `missing_validation_token` | 当前页面形态或会话未提供地址设置所需令牌 | 检查站点、出口地区、页面是否被降级或拦截 |
+| `invalid_address` / `address_not_applied` | 邮编无效，或重新读取页面后配送区域未生效 | 核对站点与邮编组合，再检查 Cookie 与代理是否保持同一会话 |
+| `network_error` | 请求超时、连接中断或代理链路波动 | 先检查代理连通性和超时配置，再利用任务重试/断点恢复 |
+
+本机受控验收记录（2026-08-28）：使用已获授权的 Redis Cookie 池和动态代理，关键词搜索任务成功返回 16 条标准结果，结果已写入 SQLite；新 Cookie 获取链路能够执行并返回安全失败码，但当次代理质量与 Amazon 风控未让 `Cookie Gate` 达标，因此没有把无效会话写入池。该记录证明现有池的采集主路径可运行，不代表任意时刻、任意代理都能生产新 Cookie。
+
 ## 配置真实抓取资源
 
 运行时直接读取进程环境变量，不会自动加载 `.env`。仓库中的 [`.env.example`](.env.example) 只定义字段、格式和安全默认值，所有 Cookie、代理及 Redis 凭证都必须保持为空。

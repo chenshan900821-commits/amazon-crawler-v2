@@ -36,7 +36,7 @@
         <article><span>任务总数</span><strong id="metricJobs">—</strong><small>持久化任务</small></article>
         <article><span>结果总数</span><strong id="metricResults">—</strong><small>幂等结果</small></article>
         <article><span>字段覆盖</span><strong id="metricCoverage">—</strong><small>核心字段质量</small></article>
-        <article><span>健康 Cookie</span><strong id="metricCookies">—</strong><small>仅显示数量，不暴露内容</small></article>
+        <article><span>健康 Cookie</span><strong id="metricCookies">—</strong><small>进程缓存快照，不暴露内容</small></article>
       </section>
 
       <section class="workspace">
@@ -139,8 +139,64 @@
         </div>
       </section>
 
+      <section class="runbook panel" id="runbook">
+        <div class="panel-title">
+          <span>从配置到结果</span><small>04 / OPERATIONS RUNBOOK</small>
+        </div>
+        <div class="runbook-head">
+          <div>
+            <p class="eyebrow">ONE PATH · TWO GATES · FULL EVIDENCE</p>
+            <h2>按一条路径跑通，<br />用两个门槛判断成功</h2>
+          </div>
+          <p>已有 Cookie 池时可以直接创建采集任务；只有需要补充新会话时才执行 Cookie 获取。服务启动、请求结束都不是业务成功，最终以 Cookie 容量和持久化结果为准。</p>
+        </div>
+
+        <div class="runbook-grid">
+          <article><b>01</b><span>CONFIG</span><strong>加载运行配置</strong><p>复制 <code>.env.example</code> 为 <code>.env</code>。Cookie、Redis 和代理秘密只由运行环境注入，不在页面中填写。</p></article>
+          <article><b>02</b><span>PREFLIGHT</span><strong>检查服务与资源</strong><p>启动 <code>serve</code> 后检查 health、capabilities 和 cookie-pools。目标任务类型、结果去向与 Cookie 来源必须可用。</p></article>
+          <article><b>03</b><span>SESSION</span><strong>确认 Cookie 就绪</strong><p>池内已有健康 Cookie 可跳过获取。新获取只有 <code>satisfied=true</code> 且 <code>available_after ≥ requested</code> 才通过。</p></article>
+          <article><b>04</b><span>MISSION</span><strong>创建真实任务</strong><p>在上方选择任务类型、站点、邮编和真实输入。默认服务内置 Worker，会自动执行、重试并保存逐项断点。</p></article>
+          <article><b>05</b><span>EVIDENCE</span><strong>核对状态与结果</strong><p>打开任务详情查看结果、事件、失败码和证据哈希。部分成功必须继续检查失败输入，不能只看进度条。</p></article>
+        </div>
+
+        <div class="run-command" aria-label="本机启动命令">
+          <span>LOCAL BOOT</span>
+          <code>source .venv/bin/activate</code>
+          <code>set -a; source .env; set +a</code>
+          <code>amazon-crawler init-db</code>
+          <code>amazon-crawler serve --host 127.0.0.1 --port 3000</code>
+        </div>
+
+        <div class="gate-grid">
+          <article class="gate-card cookie-gate">
+            <div><span>GATE 01</span><b>Cookie Gate</b></div>
+            <strong>池内存在可用会话</strong>
+            <p>已有池可直接通过；生产新 Cookie 时，必须满足 <code>available_after ≥ requested</code>。<code>created=0</code> 可能表示原有容量已足够，但 <code>satisfied=false</code> 一定未通过。</p>
+          </article>
+          <article class="gate-card result-gate">
+            <div><span>GATE 02</span><b>Result Gate</b></div>
+            <strong>状态与持久化结果同时成立</strong>
+            <p><code>succeeded</code> 且结果数大于 0 才算全部完成；<code>partial</code> 表示结果可用但仍有失败项；<code>failed</code> 或零结果不能进入下游。</p>
+          </article>
+        </div>
+
+        <div class="failure-codes">
+          <div class="failure-title"><span>SAFE FAILURE MAP</span><strong>失败时先看原因，不降低安全门槛</strong></div>
+          <dl>
+            <div><dt>proxy_acquisition_failed</dt><dd>检查代理提取链接、返回格式、线路和 IP 白名单</dd></div>
+            <div><dt>proxy_unavailable</dt><dd>补充健康代理或等待隔离结束，不静默改为直连</dd></div>
+            <div><dt>blocked</dt><dd>Amazon 风控或验证码；降低频率并更换健康出口</dd></div>
+            <div><dt>missing_*_token</dt><dd>页面形态或会话未就绪；检查站点、出口地区和拦截页</dd></div>
+            <div><dt>address_not_applied</dt><dd>邮编未生效；核对站点/邮编并保持同一代理会话</dd></div>
+            <div><dt>network_error</dt><dd>检查连接和超时，随后使用重试与断点恢复</dd></div>
+          </dl>
+        </div>
+
+        <div class="validation-receipt"><i></i><span><b>本机受控验证 · 2026-08-28</b> 已有授权 Cookie 池 + 动态代理的关键词搜索主路径已返回并持久化 16 条结果。新 Cookie 获取仍取决于当时的代理质量与 Amazon 风控，未通过 Cookie Gate 的会话不会写入池。</span></div>
+      </section>
+
       <section class="evolution panel">
-        <div class="panel-title"><span>受控进化回路</span><small>04 / EVALUATION</small></div>
+        <div class="panel-title"><span>受控进化回路</span><small>05 / EVALUATION</small></div>
         <div class="evolution-flow">
           <div><b>01</b><strong>观察</strong><span>成功率、失败码、字段缺失、站点差异</span></div>
           <i>→</i><div><b>02</b><strong>提出候选</strong><span>Agent 生成解析或调度变更建议</span></div>

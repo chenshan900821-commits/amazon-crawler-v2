@@ -417,6 +417,12 @@ class ApiTests(unittest.TestCase):
         self.assertIn("Amazon Cookie 资源", rendered)
         self.assertIn("/api/v1/cookie-pools/fill", javascript)
         self.assertIn("confirm_external_write: true", javascript)
+        self.assertIn('id="runbook"', rendered)
+        self.assertIn("Cookie Gate", rendered)
+        self.assertIn("Result Gate", rendered)
+        self.assertIn("available_after", rendered)
+        self.assertIn("amazon-crawler serve --host 127.0.0.1 --port 3000", rendered)
+        self.assertIn('health.resources.cookie.stale ? "待刷新"', javascript)
 
     def test_structured_search_input_preserves_legacy_fields(self) -> None:
         response = self.client.post(

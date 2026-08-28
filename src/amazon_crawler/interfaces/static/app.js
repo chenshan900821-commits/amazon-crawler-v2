@@ -65,7 +65,7 @@ async function loadMetrics() {
 
 async function loadResourceHealth() {
   const health = await api("/api/v1/health");
-  $("#metricCookies").textContent = health.resources.cookie.available;
+  $("#metricCookies").textContent = health.resources.cookie.stale ? "待刷新" : health.resources.cookie.available;
   $("#healthText").textContent = health.resources.cookie.stale ? "系统就绪 · Cookie 待刷新" : "系统就绪 · 自动刷新";
 }
 
