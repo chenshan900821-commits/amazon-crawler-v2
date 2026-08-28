@@ -442,8 +442,12 @@ class ProxyExtractionClient:
         raw = candidate.strip()
         if not raw or any(char in raw for char in "\r\n"):
             return None
-        parsed = urlparse(raw if "://" in raw else f"//{raw}")
-        if not parsed.hostname or parsed.port is None:
+        try:
+            parsed = urlparse(raw if "://" in raw else f"//{raw}")
+            port = parsed.port
+        except ValueError:
+            return None
+        if not parsed.hostname or port is None:
             return None
         scheme = parsed.scheme or "http"
         if scheme not in {"http", "https"}:
@@ -451,7 +455,7 @@ class ProxyExtractionClient:
         host = parsed.hostname
         if ":" in host and not host.startswith("["):
             host = f"[{host}]"
-        authority = f"{host}:{parsed.port}"
+        authority = f"{host}:{port}"
         if self._username and self._password:
             user = quote(self._username.reveal(), safe="")
             password = quote(self._password.reveal(), safe="")

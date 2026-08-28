@@ -344,6 +344,21 @@ class ResourceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("sensitive", repr(loader))
 
+    async def test_proxy_extraction_rejects_malformed_provider_json_safely(self) -> None:
+        async def handler(_: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"code": 406, "message": "provider route unavailable"},
+            )
+
+        loader = ProxyExtractionClient(
+            "https://extract.example.test/pool",
+            transport=httpx.MockTransport(handler),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "no valid proxies"):
+            await loader("cookie", "US")
+
 
 if __name__ == "__main__":
     unittest.main()

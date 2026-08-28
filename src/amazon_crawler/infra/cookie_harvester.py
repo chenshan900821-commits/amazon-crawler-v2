@@ -404,7 +404,10 @@ class AmazonCookieHarvester:
         if not market:
             raise ValueError("unsupported marketplace")
         marketplace_id = market.amazon_marketplace_id
-        proxy = await self._proxy_provider.acquire("cookie", marketplace_code)
+        try:
+            proxy = await self._proxy_provider.acquire("cookie", marketplace_code)
+        except Exception:
+            return "proxy_acquisition_failed"
         if self._policy.require_proxy and proxy is None:
             return "proxy_unavailable"
         fingerprint = await self._fingerprint_provider.acquire("cookie", marketplace_code)

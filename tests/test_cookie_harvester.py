@@ -267,6 +267,25 @@ class CookieHarvesterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report.failure_codes, ("address_not_applied",))
         self.assertEqual(store.values, [])
 
+    async def test_proxy_acquisition_failure_is_reported_without_aborting_fill(self) -> None:
+        class BrokenProxyProvider(StaticProxyProvider):
+            async def acquire(self, purpose: str, marketplace_id: str):
+                raise RuntimeError("provider response contained private diagnostics")
+
+        harvester = AmazonCookieHarvester(
+            store=FakeCookieStore(),
+            proxy_provider=BrokenProxyProvider(None),
+            fingerprint_provider=BrowserFingerprintProvider(),
+            policy=HarvesterPolicy(concurrency=1, max_attempts_per_cookie=1),
+            transport=httpx.MockTransport(lambda _: httpx.Response(500)),
+        )
+
+        report = await harvester.ensure_capacity("US", "10001", 1)
+
+        self.assertEqual(report.created, 0)
+        self.assertEqual(report.rejected, 1)
+        self.assertEqual(report.failure_codes, ("proxy_acquisition_failed",))
+
 
 if __name__ == "__main__":
     unittest.main()
