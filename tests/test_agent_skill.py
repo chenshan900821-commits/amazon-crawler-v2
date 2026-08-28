@@ -73,8 +73,11 @@ class AgentSkillTests(unittest.TestCase):
         self.assertTrue(skill.startswith("---\nname: operate-amazon-crawler\n"))
         self.assertIn("description:", skill.split("---", 2)[1])
         self.assertIn("scoped Worker", skill)
-        self.assertIn("Always run `doctor` before `run` or `create`", skill)
-        self.assertIn("Use `run` by default", skill)
+        self.assertIn("crawler_run_job", skill)
+        self.assertIn("crawler_doctor", skill)
+        self.assertIn("Prefer the `crawler_*` MCP tools", skill)
+        self.assertIn("Always run MCP `crawler_doctor` or CLI `doctor`", skill)
+        self.assertIn("Use `crawler_run_job` or `run` by default", skill)
         self.assertIn("data.row_count", skill)
         self.assertIn("$operate-amazon-crawler", metadata)
 

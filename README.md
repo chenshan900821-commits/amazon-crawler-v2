@@ -1,6 +1,6 @@
 # Amazon Crawler V2
 
-面向 Amazon 数据采集场景的可恢复、可观测爬虫服务。项目提供管理界面、HTTP API、命令行和 Agent Skill，统一承载任务创建、断点续爬、暂停/恢复、结果查询、多存储投递以及 Cookie/代理资源管理。
+面向 Amazon 数据采集场景的可恢复、可观测爬虫服务。项目提供管理界面、HTTP API、命令行、MCP Server/Client 和 Agent Skill，统一承载任务创建、断点续爬、暂停/恢复、结果查询、多存储投递以及 Cookie/代理资源管理。
 
 > 当前阶段：P0 核心能力和离线测试已完成，可以用于本地开发与受控联调。在补齐认证、租户隔离、限流、配额和真实站点验收前，不应直接作为公网生产服务。
 
@@ -144,7 +144,7 @@ SQLite 标准结果保存在 `.data/crawler.db`；选择 `jsonl` 结果去向后
 
 在前台进程中按 `Ctrl+C` 安全停止。再次打开终端后，重新加载 `.env`，然后运行 `amazon-crawler serve` 或 `amazon-crawler worker`。任务状态和断点保存在 SQLite 中；Worker 会恢复可继续处理的任务，不要求浏览器保持打开。
 
-## 四种运行方式
+## 主要运行方式
 
 | 方式 | 启动命令 | 谁创建任务 | 适用场景 |
 |---|---|---|---|
@@ -152,6 +152,7 @@ SQLite 标准结果保存在 `.data/crawler.db`；选择 `jsonl` 结果去向后
 | 单任务自包含运行 | `amazon-crawler run ...` | CLI 或 Agent Skill | 一次请求直接拿结果，不依赖预启动服务 |
 | 纯命令行队列运行 | `amazon-crawler create ...` 后执行 `amazon-crawler worker --once` | CLI | 批处理整个当前队列 |
 | 常驻 Worker | `amazon-crawler worker` | CLI、API 或外部调度器 | 无页面、定时或持续运行 |
+| MCP Agent 调用 | `amazon-crawler-mcp` 或 MCP Client 自动拉起 | Codex、其他 MCP Host | 结构化工具发现、调用和结果读取 |
 
 ## 使用 Agent Skill
 
@@ -163,7 +164,7 @@ SQLite 标准结果保存在 `.data/crawler.db`；选择 `jsonl` 结果去向后
 $operate-amazon-crawler 为 US 站点创建一个已获授权的商品采集任务，并报告任务状态和结果数量。
 ```
 
-Agent Skill 默认使用 `run`：完成配置检查后，创建任务、启动只处理该任务的临时 Worker、等待终态、处理该任务的结果投递并返回结果，然后自动退出。因此普通 Agent 采集不要求用户预先启动网页、API 或常驻 Worker。
+Agent Skill 在已连接 `amazon-crawler` MCP 时优先使用 `crawler_run_job`，否则使用确定性包装脚本的 `run`。两条路径共用同一个应用服务：完成配置检查后，创建任务、启动只处理该任务的临时 Worker、等待终态、处理该任务的结果投递并返回结果，然后自动退出。因此普通 Agent 采集不要求用户预先启动网页、API 或常驻 Worker。
 
 Skill 不会启动网页/API、全局常驻 Worker、Cookie 生产或 Cookie 维护，也不接收数据库路径、Cookie 或代理秘密。只有用户明确要求“放入已有部署异步执行”时才使用 queue-only `create`；这时运维人员必须已经运行以下任一种执行进程：
 
@@ -192,6 +193,105 @@ python skills/operate-amazon-crawler/scripts/crawler_cli.py events JOB_ID
 
 搜索任务的 `results` 外层是一条“页面结果信封”，真实搜索行数在 `results[0].data.row_count`，商品列表在 `results[0].data.items`；不能把外层数组长度误当成搜索商品数量。完整安全边界和输入契约见 [`skills/operate-amazon-crawler/SKILL.md`](skills/operate-amazon-crawler/SKILL.md)。
 
+## 使用 MCP Server 和 Client
+
+MCP 层直接复用同一个 Application Service、SQLite 状态库、Worker 和结果投递器，不包含第二套爬虫实现。Server 提供 STDIO 和 Streamable HTTP 两种传输；Client 可以启动本地 STDIO Server，也可以连接远程 HTTP Server。
+
+### 本机验证：Client 自动启动 Server
+
+先按[准备并加载配置](#2-准备并加载配置)把 `.env` 加载到当前终端。以下命令会启动一个子进程 MCP Server、完成协议握手、列出工具，并实际调用 `crawler_doctor` 和 `crawler_capabilities`；不需要先运行页面、API 或 Worker：
+
+```bash
+amazon-crawler-mcp-client smoke
+```
+
+成功结果必须同时满足：
+
+- `ok=true`；
+- `checks.handshake=true`；
+- `checks.missing_required_tools=[]`；
+- `checks.doctor_call_ok=true` 和 `checks.capabilities_call_ok=true`；
+- `checks.configuration_ready=true` 才表示抓取所需配置已补齐。
+
+查看完整工具定义和参数 JSON Schema：
+
+```bash
+amazon-crawler-mcp-client list-tools
+amazon-crawler-mcp-client list-resources
+```
+
+创建一个只入队、不等待的任务：
+
+```bash
+amazon-crawler-mcp-client call crawler_create_job \
+  --arguments '{"inputs":["B0XXXXXXXX"],"kind":"product","marketplace_id":"US","postal_code":"10001","idempotency_key":"YOUR_REQUEST_ID"}'
+```
+
+`crawler_create_job` 返回 `completion_evidence=false`，表示任务只是持久化；已有常驻 Worker 才会消费它。希望 MCP 自己启动任务范围内的临时 Worker、等待终态并返回结果时，调用：
+
+```bash
+amazon-crawler-mcp-client call crawler_run_job \
+  --arguments '{"inputs":["B0XXXXXXXX"],"kind":"product","marketplace_id":"US","postal_code":"10001","timeout_seconds":600}'
+```
+
+`crawler_run_job` 与 CLI 的 `run` 使用同一个 scoped runner，只处理该根任务及其派生任务，不会消费其他排队任务。`B0XXXXXXXX`、`YOUR_REQUEST_ID` 都是说明性占位符，必须替换成真实 ASIN 和调用方自己的稳定请求编号。
+
+### MCP 工具边界
+
+| 工具组 | 工具 | 说明 |
+|---|---|---|
+| 预检与发现 | `crawler_doctor`、`crawler_capabilities`、`crawler_metrics` | 返回脱敏配置结论、能力和本地指标 |
+| 执行 | `crawler_create_job`、`crawler_run_job` | 分别用于入队和自包含运行 |
+| 查询 | `crawler_list_jobs`、`crawler_get_job`、`crawler_get_results`、`crawler_get_events`、`crawler_get_deliveries` | 查询状态、证据和结果 |
+| 控制 | `crawler_pause_job`、`crawler_resume_job`、`crawler_cancel_job` | 取消必须传入 `confirm=true` |
+
+Server 不接受 Cookie、代理、Redis/MySQL URL、数据库路径或任意请求头作为 Tool 参数。这些值只能由 Server 进程环境或部署平台 Secret 提供。Cookie 生产、Cookie 维护、旧任务导入导出和外部状态回写没有暴露为 MCP 工具；它们继续属于人工运维面。
+
+配置缺失时先调用 `crawler_doctor`。它会在 `blocking_issues` 中返回缺少的环境变量名和配置位置，不返回秘密值。`crawler_create_job` 和 `crawler_run_job` 会拒绝在 `configuration_ready=false` 时创建任务。
+
+### 配置 Codex 使用本机 MCP
+
+先在终端加载 `.env`，再从同一个终端启动 Codex。项目级 `.codex/config.toml` 可以只声明命令和允许转发的变量名，不写真实秘密：
+
+```toml
+[mcp_servers.amazon-crawler]
+command = "/ABSOLUTE_PATH/amazon-crawler-v2/.venv/bin/amazon-crawler-mcp"
+cwd = "/ABSOLUTE_PATH/amazon-crawler-v2"
+env_vars = [
+  "CRAWLER_DB_PATH",
+  "CRAWLER_AMAZON_COOKIE",
+  "CRAWLER_COOKIE_REDIS_URL",
+  "CRAWLER_HTTP_PROXY",
+  "CRAWLER_PROXY_EXTRACT_URL",
+  "CRAWLER_PROXY_USERNAME",
+  "CRAWLER_PROXY_PASSWORD"
+]
+```
+
+把 `/ABSOLUTE_PATH/amazon-crawler-v2` 替换为本机仓库绝对路径。只需要转发实际采用的 Cookie 和代理方式；不需要把上面所有可选变量都配置成值。修改 MCP 配置后重启 Codex，再用 `/mcp` 查看连接状态。
+
+### Streamable HTTP
+
+受控内网或后续远程部署可以启动：
+
+```bash
+amazon-crawler-mcp \
+  --transport streamable-http \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --path /mcp \
+  --json-response \
+  --stateless-http
+```
+
+另一个终端验证：
+
+```bash
+amazon-crawler-mcp-client --url http://127.0.0.1:8000/mcp smoke
+```
+
+当前 HTTP MCP 没有 OAuth、租户隔离、公网限流和结果级授权，因此只能绑定本机或放在已有认证网关之后，不能直接监听公网地址。STDIO 适合本机 Agent；Streamable HTTP 才是后续部署入口。
+
 ## 需要新 Cookie 时
 
 如果 Redis 池已经满足容量，不需要先生产新 Cookie，可以直接创建抓取任务。确实需要补池时，可以使用页面中的“Amazon Cookie 资源”，也可以调用同一生产内核：
@@ -218,7 +318,7 @@ Amazon 数据采集涉及任务调度、资源管理、页面解析、失败恢�
 | 多结果存储 | SQLite 为标准结果原本，可通过事务 outbox 投递到 JSONL、Redis 或 MySQL |
 | Cookie 与代理 | 支持静态 Cookie、Redis Cookie 池、配送区域、代理提取、隔离和刷新 |
 | 可观测性 | 提供任务事件、结果、投递状态、指标、响应哈希和可选脱敏证据 |
-| 多种入口 | 提供 Web 管理界面、REST API、CLI 和 Agent Skill |
+| 多种入口 | 提供 Web 管理界面、REST API、CLI、MCP Server/Client 和 Agent Skill |
 
 ## 支持的任务
 
@@ -240,7 +340,7 @@ Amazon 数据采集涉及任务调度、资源管理、页面解析、失败恢�
 
 ```mermaid
 flowchart LR
-    Caller[Web UI / CLI / API / Agent Skill] --> Service[Application Service]
+    Caller[Web UI / CLI / API / MCP / Agent Skill] --> Service[Application Service]
     Service --> Store[(SQLite WAL<br/>Job / Checkpoint / Event / Result)]
     Worker[Crawl Worker] --> Store
     Worker --> Resources[Cookie / Proxy / Rate Limit]
@@ -523,6 +623,7 @@ PYTHONPATH=src:. python -m unittest discover -s tests -v
 ```bash
 python -m compileall -q src
 amazon-crawler capabilities
+amazon-crawler-mcp-client smoke
 node --check src/amazon_crawler/interfaces/static/app.js
 ```
 
@@ -535,7 +636,7 @@ amazon-crawler-v2/
 │   ├── application/     # 服务、抓取 Worker、投递 Worker、Cookie 维护
 │   ├── infra/           # SQLite、HTTP、Cookie/代理、证据和结果 sink
 │   ├── plugins/         # Amazon 各任务插件与解析器
-│   └── interfaces/      # CLI、HTTP API 和 Web 管理界面
+│   └── interfaces/      # CLI、HTTP API、MCP Server/Client 和 Web 管理界面
 ├── skills/              # AI Agent Skill 及输入契约
 ├── contracts/           # 机器可读的数据与验收契约
 ├── docs/                # 架构、API 和运行文档
@@ -547,7 +648,7 @@ amazon-crawler-v2/
 
 ## 当前已知边界
 
-- 当前 HTTP 服务没有登录、租户隔离、公网限流、用量配额和结果级授权，不能直接暴露到公网。
+- 当前 HTTP API 和 Streamable HTTP MCP 没有登录、租户隔离、公网限流、用量配额和结果级授权，不能直接暴露到公网。
 - 当前标准状态库是 SQLite；多节点分布式部署尚未实现。
 - 真实站点访问仍需持续验证不同国家、邮编、页面形态和限流场景，离线测试不能替代线上验收。
 - Cookie 生产代码已通过隔离测试；真实新 Cookie 的成功率仍受代理可用性和 Amazon 风控影响，不能把代码完成等同于生产资源可用。

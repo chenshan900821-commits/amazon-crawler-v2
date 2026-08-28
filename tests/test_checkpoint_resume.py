@@ -6,9 +6,9 @@ from types import SimpleNamespace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from amazon_crawler.application.scoped_runner import run_scoped_job
 from amazon_crawler.application.service import CrawlerService
 from amazon_crawler.application.worker import Worker, _public_failure_details
-from amazon_crawler.interfaces.cli import _run_scoped_job
 from amazon_crawler.domain.errors import ConflictError
 from amazon_crawler.domain.models import (
     CrawlResult,
@@ -240,7 +240,7 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
             settings=SimpleNamespace(poll_seconds=0.01),
         )
 
-        report = await _run_scoped_job(
+        report = await run_scoped_job(
             app,
             job["id"],
             timeout_seconds=10,
@@ -285,7 +285,7 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
             settings=SimpleNamespace(poll_seconds=0.01),
         )
 
-        report = await _run_scoped_job(
+        report = await run_scoped_job(
             app,
             parent["id"],
             timeout_seconds=10,
