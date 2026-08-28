@@ -10,6 +10,7 @@ from typing import Any
 import uvicorn
 
 from amazon_crawler.bootstrap import build_application
+from amazon_crawler.application.preflight import configuration_report
 from amazon_crawler.config import Settings
 from amazon_crawler.domain.errors import CrawlerError, ValidationError
 from amazon_crawler.infra.legacy_compat import (
@@ -86,6 +87,10 @@ def _parser() -> argparse.ArgumentParser:
         if name in {"results", "events", "deliveries"}:
             command.add_argument("--limit", type=int, default=100)
 
+    sub.add_parser(
+        "doctor",
+        help="check required runtime configuration without disclosing or contacting secrets",
+    )
     sub.add_parser("capabilities")
     sub.add_parser("metrics")
     cookie_fill = sub.add_parser(
@@ -153,6 +158,9 @@ def main() -> None:
     args = _parser().parse_args()
     try:
         settings = _settings(args.db)
+        if args.command == "doctor":
+            _print(configuration_report(settings))
+            return
         app = build_application(settings)
         if args.command == "init-db":
             _print({"ok": True, "db_path": str(settings.db_path)})

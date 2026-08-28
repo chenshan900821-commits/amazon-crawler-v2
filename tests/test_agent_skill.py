@@ -17,7 +17,11 @@ WRAPPER = SKILL_ROOT / "scripts" / "crawler_cli.py"
 
 
 class AgentSkillTests(unittest.TestCase):
-    def _environment(self, db_path: Path) -> dict[str, str]:
+    def _environment(
+        self,
+        db_path: Path,
+        overrides: dict[str, str] | None = None,
+    ) -> dict[str, str]:
         environment = {
             key: value
             for key, value in os.environ.items()
@@ -25,13 +29,22 @@ class AgentSkillTests(unittest.TestCase):
         }
         environment["CRAWLER_DB_PATH"] = str(db_path)
         environment["CRAWLER_WORKER_ENABLED"] = "false"
+        environment["CRAWLER_AMAZON_COOKIE"] = (
+            "session-id=AGENT_SKILL_TEST_SECRET"
+        )
+        environment.update(overrides or {})
         return environment
 
-    def _run(self, db_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self,
+        db_path: Path,
+        *args: str,
+        environment: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(WRAPPER), *args],
             cwd=PROJECT_ROOT,
-            env=self._environment(db_path),
+            env=self._environment(db_path, environment),
             text=True,
             capture_output=True,
             check=False,
@@ -58,6 +71,7 @@ class AgentSkillTests(unittest.TestCase):
         self.assertTrue(skill.startswith("---\nname: operate-amazon-crawler\n"))
         self.assertIn("description:", skill.split("---", 2)[1])
         self.assertIn("deployment Worker prerequisite", skill)
+        self.assertIn("Always run `doctor` before `create`", skill)
         self.assertIn("data.row_count", skill)
         self.assertIn("$operate-amazon-crawler", metadata)
 
@@ -128,6 +142,90 @@ class AgentSkillTests(unittest.TestCase):
             ).lower()
             for secret_name in ("cookie_header", "proxy_url", "authorization"):
                 self.assertNotIn(secret_name, rendered)
+            self.assertNotIn("AGENT_SKILL_TEST_SECRET", rendered)
+
+    def test_doctor_explains_missing_cookie_and_create_refuses_to_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            db_path = Path(tempdir) / "skill.db"
+            missing_cookie = {
+                "CRAWLER_AMAZON_COOKIE": "",
+                "CRAWLER_REQUIRE_COOKIE": "true",
+            }
+            checked = self._run(
+                db_path,
+                "doctor",
+                environment=missing_cookie,
+            )
+            self.assertEqual(checked.returncode, 0, checked.stderr or checked.stdout)
+            report = json.loads(checked.stdout)
+            self.assertFalse(report["configuration_ready"])
+            self.assertEqual(
+                report["checks"]["cookie"]["selected_source"],
+                "none",
+            )
+            self.assertIn(
+                "COOKIE_SOURCE_MISSING",
+                {issue["code"] for issue in report["blocking_issues"]},
+            )
+            self.assertIn("CRAWLER_COOKIE_REDIS_URL", checked.stdout)
+            self.assertIn("CRAWLER_AMAZON_COOKIE", checked.stdout)
+
+            refused = self._run(
+                db_path,
+                "create",
+                "B000000001",
+                "--marketplace",
+                "US",
+                environment=missing_cookie,
+            )
+            self.assertEqual(refused.returncode, 2)
+            refused_report = json.loads(refused.stdout)
+            self.assertEqual(
+                refused_report["error"]["type"],
+                "MissingConfiguration",
+            )
+            self.assertFalse(db_path.exists())
+
+    def test_doctor_distinguishes_proxy_modes_without_disclosing_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            db_path = Path(tempdir) / "skill.db"
+            direct = self._run(db_path, "doctor")
+            direct_report = json.loads(direct.stdout)
+            self.assertTrue(direct_report["configuration_ready"])
+            self.assertEqual(
+                direct_report["checks"]["proxy"]["selected_mode"],
+                "direct",
+            )
+            self.assertEqual(
+                direct_report["checks"]["worker"]["runtime_status"],
+                "not_verified",
+            )
+
+            extract_secret = "https://proxy.example/extract?token=DO_NOT_DISCLOSE"
+            fixed_secret = "http://fixed-user:FIXED_SECRET@proxy.example:8080"
+            incomplete = self._run(
+                db_path,
+                "doctor",
+                environment={
+                    "CRAWLER_PROXY_EXTRACT_URL": extract_secret,
+                    "CRAWLER_PROXY_USERNAME": "dynamic-user",
+                    "CRAWLER_PROXY_PASSWORD": "",
+                    "CRAWLER_HTTP_PROXY": fixed_secret,
+                },
+            )
+            report = json.loads(incomplete.stdout)
+            self.assertFalse(report["configuration_ready"])
+            self.assertEqual(
+                report["checks"]["proxy"]["selected_mode"],
+                "dynamic_extraction_api",
+            )
+            issue_codes = {issue["code"] for issue in report["blocking_issues"]}
+            warning_codes = {warning["code"] for warning in report["warnings"]}
+            self.assertIn("PROXY_CREDENTIALS_INCOMPLETE", issue_codes)
+            self.assertIn("DYNAMIC_PROXY_TAKES_PRECEDENCE", warning_codes)
+            self.assertNotIn(extract_secret, incomplete.stdout)
+            self.assertNotIn(fixed_secret, incomplete.stdout)
+            self.assertNotIn("FIXED_SECRET", incomplete.stdout)
 
     def test_wrapper_rejects_cookie_and_legacy_write_commands(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

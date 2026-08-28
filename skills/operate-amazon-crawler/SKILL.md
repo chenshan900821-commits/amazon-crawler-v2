@@ -11,18 +11,23 @@ Use `scripts/crawler_cli.py` for every operation. It fixes the project root, ret
 
 This skill controls durable jobs but never starts the API, crawl Worker, delivery Worker, or Cookie maintenance. Before asking the skill to create work, a deployment operator must already be running either `amazon-crawler serve` with its Worker enabled or a dedicated `amazon-crawler worker` against the same `CRAWLER_DB_PATH`.
 
+Always run `doctor` before `create`. If `configuration_ready` is false, stop and tell the user exactly which environment-variable names appear in `blocking_issues`, where to set them, and how to reload `.env`. Never ask the user to paste a Cookie, proxy URL, proxy password, Redis URL, or other secret into the Agent conversation or task arguments. The user must put those values in the project-root `.env` or a deployment-platform Secret, then run `set -a; source .env; set +a` in the process environment. Run `doctor` again after configuration changes.
+
+`doctor` is a secret-free structural check. It does not contact Amazon, Redis, or the proxy provider, and its Worker status is deliberately `not_verified`. Do not claim a Worker is live from that report.
+
 Do not describe `created: true` as “the crawl has started.” It means the durable job was accepted. Use `show` to distinguish `pending` from `running` or a terminal state. If a new job remains `pending`, report that no active Worker has been confirmed; do not create duplicate jobs as a workaround.
 
 ## Workflow
 
-1. Confirm the deployment Worker prerequisite is already satisfied. The skill must not start it.
-2. Run `capabilities` before creating a job when the marketplace or input form is unclear.
-3. Normalize the user's explicit scope into the selected task contract. Read [references/input-contracts.md](references/input-contracts.md) for non-product tasks.
-4. Run `create`; preserve its returned `job.id`. Repeated identical requests are idempotent. Keep the default `sqlite` result sink unless the user requests another sink shown by `capabilities`.
-5. Run `show` to report counts, item failures, checkpoint, and status. Use `events`, `results`, or `deliveries` only when evidence is requested.
-6. Use `pause` for a safe stop. In-flight work may finish before status becomes `paused`.
-7. Use `resume` only for `paused` or `pause_requested` jobs.
-8. Use `cancel` only after the user explicitly confirms cancellation, and include `--confirm-cancel`.
+1. Run `doctor`. Stop on any `blocking_issues` and give the user the returned configuration instructions without requesting secret values in chat.
+2. Confirm the deployment Worker prerequisite is already satisfied. The skill must not start it.
+3. Run `capabilities` before creating a job when the marketplace or input form is unclear.
+4. Normalize the user's explicit scope into the selected task contract. Read [references/input-contracts.md](references/input-contracts.md) for non-product tasks.
+5. Run `create`; preserve its returned `job.id`. The wrapper repeats the configuration check and refuses creation if required configuration is missing. Repeated identical requests are idempotent. Keep the default `sqlite` result sink unless the user requests another sink shown by `capabilities`.
+6. Run `show` to report counts, item failures, checkpoint, and status. Use `events`, `results`, or `deliveries` only when evidence is requested.
+7. Use `pause` for a safe stop. In-flight work may finish before status becomes `paused`.
+8. Use `resume` only for `paused` or `pause_requested` jobs.
+9. Use `cancel` only after the user explicitly confirms cancellation, and include `--confirm-cancel`.
 
 ## Commands
 
@@ -31,6 +36,7 @@ Run commands from the project root:
 `B0XXXXXXXX` below is only an ASIN-shaped marker. Replace it with the authorized target product's real 10-character ASIN. Replace `JOB_ID` with the `job.id` returned by `create`.
 
 ```bash
+python skills/operate-amazon-crawler/scripts/crawler_cli.py doctor
 python skills/operate-amazon-crawler/scripts/crawler_cli.py capabilities
 python skills/operate-amazon-crawler/scripts/crawler_cli.py create B0XXXXXXXX --marketplace US --mode standard
 python skills/operate-amazon-crawler/scripts/crawler_cli.py create --kind search --input-json '{"keyword":"wireless mouse","market_id":"US","post_code":"10001","turn_page":1,"frequent":0}'

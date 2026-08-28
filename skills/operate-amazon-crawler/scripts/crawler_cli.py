@@ -9,6 +9,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 ALLOWED_COMMANDS = {
+    "doctor",
     "capabilities",
     "create",
     "list",
@@ -58,6 +59,22 @@ def main() -> None:
 
     os.chdir(PROJECT_ROOT)
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
+    if args[0] == "create":
+        from amazon_crawler.application.preflight import configuration_report
+        from amazon_crawler.config import Settings
+
+        report = configuration_report(Settings.from_env(project_root=PROJECT_ROOT))
+        if not report["configuration_ready"]:
+            report["ok"] = False
+            report["error"] = {
+                "type": "MissingConfiguration",
+                "message": (
+                    "Agent Skill 未创建任务：请按 blocking_issues 在 .env 或部署平台 "
+                    "Secret 中补齐配置，加载环境变量后重新运行 doctor。"
+                ),
+            }
+            print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+            raise SystemExit(2)
     sys.argv = ["amazon-crawler", *args]
     from amazon_crawler.interfaces.cli import main as crawler_main
 

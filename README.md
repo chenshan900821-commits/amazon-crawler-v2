@@ -33,7 +33,16 @@ chmod 600 .env
 - Redis Cookie 池：`CRAWLER_COOKIE_REDIS_URL`，推荐用于持续运行。
 - 静态 Cookie：`CRAWLER_AMAZON_COOKIE`，适合单会话联调。
 
-需要代理时，动态代理配置 `CRAWLER_PROXY_EXTRACT_URL`，固定代理配置 `CRAWLER_HTTP_PROXY`。每个占位符具体代表什么，见[配置真实抓取资源](#配置真实抓取资源)。真实 Cookie、代理凭证和数据库连接只放在本机 `.env` 或部署平台 Secret 中。
+代理不是按“出口 IP 会不会变化”来选，而是按代理服务商交给你的连接方式来选：
+
+| 服务商交给你的内容 | 配置哪个变量 | 程序如何使用 |
+|---|---|---|
+| 一个“提取代理”的 API 链接；访问链接后返回 `host:port` | `CRAWLER_PROXY_EXTRACT_URL` | 代理池为空时调用该链接，取得新的代理地址 |
+| 一个可以直接连接的完整代理/隧道 URL（由协议、隧道账号、密码、网关主机和端口组成） | `CRAWLER_HTTP_PROXY` | 每次请求都连接这个地址 |
+
+例如，青果给你的是“提取链接”，就配置 `CRAWLER_PROXY_EXTRACT_URL`；给你的是隧道网关、主机和端口，就拼成完整 URL 配置 `CRAWLER_HTTP_PROXY`。即使隧道背后的出口 IP 自动变化，只要程序始终连接同一个网关，它仍属于 `CRAWLER_HTTP_PROXY`。通常只配置一种；两种同时配置时，程序只使用动态提取接口，不会在提取失败后回退到固定代理。
+
+每个占位符具体代表什么，见[配置真实抓取资源](#配置真实抓取资源)。真实 Cookie、代理凭证和数据库连接只放在本机 `.env` 或部署平台 Secret 中。
 
 项目不会自动读取 `.env`。每次打开新终端，都先执行：
 
@@ -43,6 +52,14 @@ set -a
 source .env
 set +a
 ```
+
+先运行脱敏配置检查。它只检查是否缺项和格式是否合理，不连接 Amazon、Redis 或代理，也不会显示任何秘密值：
+
+```bash
+amazon-crawler doctor
+```
+
+只有 `configuration_ready=true` 才表示必填配置已经补齐；它不等于真实网络已经连通。若为 `false`，按 `blocking_issues` 列出的环境变量名修改 `.env`，重新加载后再检查。
 
 然后初始化任务数据库：
 
@@ -150,9 +167,12 @@ amazon-crawler worker
 
 两者必须与 Skill 使用相同的 `CRAWLER_DB_PATH`。`create` 返回 `created: true` 只表示任务已经持久化；继续用 `show` 确认它从 `pending` 进入 `running` 或终态。如果一直是 `pending`，先检查 Worker，不要反复创建相同任务。
 
+Skill 每次创建任务前都会先做与 `amazon-crawler doctor` 相同的脱敏检查。缺少 Cookie 来源、代理字段只填一半或 URL 格式明显错误时，它不会创建任务，而会返回 `blocking_issues`，其中只包含需要配置的环境变量名和操作说明。用户应在项目根目录 `.env` 或部署平台 Secret 中填写真实值，再加载配置；不要把 Cookie、提取链接、账号密码或 Redis URL 发给 Agent。
+
 不依赖 Agent 界面时，可以直接验证 Skill 的确定性包装脚本：
 
 ```bash
+python skills/operate-amazon-crawler/scripts/crawler_cli.py doctor
 python skills/operate-amazon-crawler/scripts/crawler_cli.py capabilities
 python skills/operate-amazon-crawler/scripts/crawler_cli.py create B0XXXXXXXX --marketplace US
 python skills/operate-amazon-crawler/scripts/crawler_cli.py show JOB_ID
@@ -252,9 +272,19 @@ CRAWLER_AMAZON_COOKIE='{"session-id":"SESSION_ID_VALUE","ubid-main":"UBID_VALUE"
 
 `CRAWLER_MERCHANT_COOKIE` 使用相同格式，仅在商家和榜单任务需要独立会话时配置。未配置 Redis Cookie 池时，普通任务使用 `CRAWLER_AMAZON_COOKIE`。
 
-### 固定代理填什么
+### 代理先判断：提取 API 还是直接连接地址
 
-只有一个长期可用代理时，配置完整代理 URL：
+判断方法只看你从服务商控制台拿到什么：
+
+- 点击或请求某个链接后，服务商才返回一批 `IP:端口`：这是“提取 API”，配置 `CRAWLER_PROXY_EXTRACT_URL`。
+- 服务商直接给出“网关主机 + 端口”，程序可以把它当代理连接：这是“直接连接地址”，配置 `CRAWLER_HTTP_PROXY`。
+- “动态 IP 隧道”通常仍有固定网关。虽然出口 IP 变化，但程序连接的网关没变，所以配置 `CRAWLER_HTTP_PROXY`，不要配置提取 URL。
+
+两种方式通常二选一。若同时配置，`CRAWLER_PROXY_EXTRACT_URL` 优先，`CRAWLER_HTTP_PROXY` 不作为备用线路。
+
+### 直接连接的代理或隧道填什么
+
+拿到一个可直接连接的代理 IP 或隧道网关时，配置完整代理 URL：
 
 ```bash
 # 无认证代理
@@ -274,7 +304,7 @@ CRAWLER_HTTP_PROXY='http://PROXY_HOST:PROXY_PORT'
 
 推荐使用 `http://` 或 `https://` 代理 URL。不要把代理地址直接写入代码。
 
-### 青果动态代理填什么
+### 提取型动态代理填什么（包括青果提取 API）
 
 使用青果的提取型代理时，配置以下三个通用变量，不需要修改 Python 代码：
 
@@ -288,6 +318,8 @@ CRAWLER_PROXY_PASSWORD='QINGGUO_TUNNEL_PASSWORD'
 - `CRAWLER_PROXY_USERNAME`：青果代理隧道认证用户名。
 - `CRAWLER_PROXY_PASSWORD`：青果代理隧道认证密码。
 - 提取接口必须以纯文本返回代理，每行一个 `host:port`、`http://host:port` 或 `https://host:port`；当前不接受 HTML 或 JSON 响应。
+
+这里的用户名和密码用于认证“提取出来的代理地址”。如果青果给你的是一个可直接连接的隧道网关，而不是返回 `host:port` 的提取 API，就不要使用这三个变量；应将隧道账号、密码、网关和端口拼成完整 URL，写入 `CRAWLER_HTTP_PROXY`。
 
 如果青果采用 IP 白名单而不要求隧道账号，用户名和密码保持为空。配置 `CRAWLER_PROXY_EXTRACT_URL` 后，动态代理池优先于 `CRAWLER_HTTP_PROXY`；提取失败时系统会进入冷却并报告资源错误，不会偷偷改成直连。
 

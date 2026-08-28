@@ -140,6 +140,7 @@ class CrawlerService:
             "marketplaces": public_marketplaces(),
             "control": ["pause", "resume", "cancel"],
             "agent_safe_operations": [
+                "doctor",
                 "capabilities",
                 "create",
                 "list",
