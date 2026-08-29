@@ -4,6 +4,36 @@
 
 > 当前阶段：P0 核心能力和离线测试已完成；MCP 已具备认证、scope、租户隔离、审计、限流、并发闸门和高风险操作审批，可用于本地开发与受控单机部署。普通 HTTP API 仍是本机管理面；真实站点和公网商业化验收仍需单独完成。
 
+## 真实可用性演示
+
+下面四条视频不是 UI Mock，也不是复用同一条缓存结果。它们分别通过 Agent Skill、MCP、Web 页面和正式 CLI 创建独立 Job，请求真实 Amazon US 商品页，并取得结构化商品数据、HTTP 200、响应字节数与独立 SHA-256。为了不把 Cookie、代理和 Token 录入仓库，终端演示剪掉了等待时间并只保留脱敏命令、状态迁移、结果摘要和证据；Web 演示保留了真实页面从填写任务、执行中到结果详情的连续关键画面。
+
+点击任一动图可打开对应的 1280×720 MP4 完整版。演示使用的 ASIN、Job ID、重试次数、结果字段、响应哈希和视频文件哈希见 [`docs/DEMO_EVIDENCE.md`](docs/DEMO_EVIDENCE.md)。这些证据证明 2026-08-29 的受控本机样本真实跑通，不等同于所有站点、所有任务类型或公网生产 SLA 已验收。
+
+### Web 页面：创建任务 → 自动执行 → 查看数据与证据
+
+[![Web 控制台真实采集演示](docs/assets/demos/web-control-plane.gif)](docs/assets/demos/web-control-plane.mp4)
+
+实际 Job：`job_d02afb53ad1b4017828b959f3818ccab`；`product_time · realtime`；第 2 次尝试成功；页面显示标题、评分、覆盖率、SQLite 提交状态、HTTP 响应证据和事件时间线。
+
+### Agent Skill：自然语言请求 → 安全预检 → 任务范围内 Worker → 结果
+
+[![Agent Skill 真实采集演示](docs/assets/demos/agent-skill.gif)](docs/assets/demos/agent-skill.mp4)
+
+实际 Job：`job_faf30b929a1645f49902681865d2a3c7`；Skill 后备包装器真实执行；第 2 次尝试成功；`lineage_status=succeeded`，临时 Worker 到达 `terminal` 后退出。
+
+### MCP：握手与工具发现 → `crawler_run_job` → 结构化结果
+
+[![MCP Server 和 Client 真实采集演示](docs/assets/demos/mcp.gif)](docs/assets/demos/mcp.mp4)
+
+实际 Job：`job_4d077f808a2143d7bb069c34609c26ca`；协议版本 `2026-07-28`；发现 13 个 Tool；`result.is_error=false` 且业务任务 `lineage_status=succeeded`。
+
+### CLI：无需页面或常驻 Worker，单命令等待完整结果
+
+[![CLI 真实采集演示](docs/assets/demos/cli.gif)](docs/assets/demos/cli.mp4)
+
+实际 Job：`job_398ea5ba01844401a4736cb12ae86f04`；两次有限重试后第 3 次成功；返回一条 `amazon.product-observation.v1` 结果并持久化到 SQLite。
+
 ## 先看这里：从安装到拿到结果
 
 这一节是项目的唯一主运行入口。第一次使用时按顺序执行即可；后面的章节用于解释配置、任务类型和部署方式。

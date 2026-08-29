@@ -1,0 +1,29 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Header,Hiragino Sans GB,18,&H0093A4A8,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,2,0,1,0,0,7,62,62,35,1
+Style: Title,Hiragino Sans GB,44,&H00F4FCFD,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,0,0,7,70,70,74,1
+Style: Accent,Hiragino Sans GB,22,&H0058FFD2,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,0,0,7,72,72,134,1
+Style: Mono,Hiragino Sans GB,23,&H00D8E3E5,&H000000FF,&H00000000,&HAA132124,0,0,0,0,100,100,0,0,3,0,0,7,76,76,192,1
+Style: Success,Hiragino Sans GB,27,&H0058FFD2,&H000000FF,&H00000000,&HAA132124,1,0,0,0,100,100,0,0,3,0,0,7,76,76,192,1
+Style: Foot,Hiragino Sans GB,18,&H008FA4A7,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,1,50,50,30,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:27.00,Header,,0,0,0,,AMAZON CRAWLER · VERIFIED RUN · 2026-08-29
+Dialogue: 0,0:00:00.00,0:00:03.20,Title,,0,0,0,,MCP Server + Client 真实调用
+Dialogue: 0,0:00:00.00,0:00:03.20,Accent,,0,0,0,,STDIO 握手 → Tool 发现 → crawler_run_job → 结构化返回
+Dialogue: 0,0:00:03.20,0:00:08.60,Title,,0,0,0,,01 / 协议预检
+Dialogue: 0,0:00:03.20,0:00:08.60,Mono,,0,0,0,,$ amazon-crawler-mcp-client smoke\Nprotocol_version: 2026-07-28\Nhandshake: true · listed_tool_count: 13\Nmissing_required_tools: []\Nconfiguration_ready: true
+Dialogue: 0,0:00:08.60,0:00:14.50,Title,,0,0,0,,02 / 调用 Tool
+Dialogue: 0,0:00:08.60,0:00:14.50,Mono,,0,0,0,,$ amazon-crawler-mcp-client call crawler_run_job\N  inputs: [B07FZ8S74R]\N  kind: product · marketplace_id: US\N  postal_code: 10001 · timeout_seconds: 240
+Dialogue: 0,0:00:14.50,0:00:21.50,Title,,0,0,0,,03 / MCP 与业务结果同时成功
+Dialogue: 0,0:00:14.50,0:00:21.50,Success,,0,0,0,,✓ result.is_error: false\N✓ lineage_status: succeeded\N✓ job_4d077f808a2143d7bb069c34609c26ca\N✓ ASIN B07FZ8S74R · Rating 4.7 / 5\N✓ HTTP 200 · 1,563,695 bytes
+Dialogue: 0,0:00:21.50,0:00:27.00,Title,,0,0,0,,04 / 独立响应证据
+Dialogue: 0,0:00:21.50,0:00:27.00,Mono,,0,0,0,,SHA-256\N923ea9cbdda731ddfa1c0d7bece8a9b1\N141eb49e99b408bf22bded1fa789ee58\N\NMCP audit latency: 29,027 ms
+Dialogue: 0,0:00:00.00,0:00:27.00,Foot,,0,0,0,,真实请求的脱敏录屏摘要 · 外层协议成功不替代业务终态证据

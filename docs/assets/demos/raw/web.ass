@@ -1,0 +1,18 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Badge,Hiragino Sans GB,18,&H0058FFD2,&H000000FF,&H00000000,&HCC0A1113,1,0,0,0,100,100,1,0,3,0,0,7,26,26,24,1
+Style: Caption,Hiragino Sans GB,26,&H00F4FCFD,&H000000FF,&H00000000,&HDD0A1113,1,0,0,0,100,100,0,0,3,0,0,2,42,42,36,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:17.60,Badge,,0,0,0,,WEB CONTROL PLANE · VERIFIED RUN · 2026-08-29
+Dialogue: 0,0:00:00.00,0:00:04.40,Caption,,0,0,0,,01 / 服务就绪 · 任务、结果、字段质量统一可见
+Dialogue: 0,0:00:04.40,0:00:08.80,Caption,,0,0,0,,02 / 填入真实 ASIN · US · 10001 · product_time
+Dialogue: 0,0:00:08.80,0:00:13.20,Caption,,0,0,0,,03 / 创建后自动进入队列并由内置 Worker 执行
+Dialogue: 0,0:00:13.20,0:00:17.60,Caption,,0,0,0,,04 / 1/1 成功 · 标题/评分/HTTP 200/SHA 证据可查
