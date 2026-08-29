@@ -15,6 +15,7 @@ from mcp.types import TextResourceContents
 from amazon_crawler.bootstrap import build_application
 from amazon_crawler.config import Settings
 from amazon_crawler.interfaces.mcp_server import create_mcp_server
+from amazon_crawler.interfaces.mcp_policy import TOOL_SCOPES
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +27,7 @@ REQUIRED_TOOLS = {
     "crawler_get_results",
     "crawler_get_events",
     "crawler_get_deliveries",
+    "crawler_get_audit_events",
     "crawler_metrics",
     "crawler_create_job",
     "crawler_run_job",
@@ -37,7 +39,9 @@ REQUIRED_TOOLS = {
 
 def _environment(db_path: Path, *, cookie: bool = True) -> dict[str, str]:
     environment = {
-        key: value for key, value in os.environ.items() if not key.startswith("CRAWLER_")
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("CRAWLER_")
     }
     environment.update(
         {
@@ -75,6 +79,7 @@ class MCPInMemoryTests(unittest.IsolatedAsyncioTestCase):
             listed = await client.list_tools()
             tools = {tool.name: tool for tool in listed.tools}
             self.assertEqual(set(tools), REQUIRED_TOOLS)
+            self.assertEqual(set(TOOL_SCOPES), REQUIRED_TOOLS)
             create_schema = tools["crawler_create_job"].input_schema
             self.assertIn("inputs", create_schema["required"])
             self.assertEqual(create_schema["properties"]["inputs"]["maxItems"], 500)

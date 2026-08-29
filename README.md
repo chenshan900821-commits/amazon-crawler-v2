@@ -2,7 +2,7 @@
 
 面向 Amazon 数据采集场景的可恢复、可观测爬虫服务。项目提供管理界面、HTTP API、命令行、MCP Server/Client 和 Agent Skill，统一承载任务创建、断点续爬、暂停/恢复、结果查询、多存储投递以及 Cookie/代理资源管理。
 
-> 当前阶段：P0 核心能力和离线测试已完成，可以用于本地开发与受控联调。在补齐认证、租户隔离、限流、配额和真实站点验收前，不应直接作为公网生产服务。
+> 当前阶段：P0 核心能力和离线测试已完成；MCP 已具备认证、scope、租户隔离、审计、限流、并发闸门和高风险操作审批，可用于本地开发与受控单机部署。普通 HTTP API 仍是本机管理面；真实站点和公网商业化验收仍需单独完成。
 
 ## 先看这里：从安装到拿到结果
 
@@ -197,6 +197,17 @@ python skills/operate-amazon-crawler/scripts/crawler_cli.py events JOB_ID
 
 MCP 层直接复用同一个 Application Service、SQLite 状态库、Worker 和结果投递器，不包含第二套爬虫实现。Server 提供 STDIO 和 Streamable HTTP 两种传输；Client 可以启动本地 STDIO Server，也可以连接远程 HTTP Server。
 
+标准 MCP 接口由官方 Python SDK 实现，不需要再发明一套同名业务 API：
+
+- `initialize`：握手、能力协商和协议版本协商；
+- `tools/list`、`tools/call`：发现并调用爬虫工具；
+- `resources/list`、`resources/templates/list`、`resources/read`：发现并读取资源；
+- STDIO 与 Streamable HTTP 传输。
+
+当前安装的 SDK 以 `2026-07-28` 为最新协议版本，并可与 `2024-11-05`、`2025-03-26`、`2025-06-18`、`2025-11-25` 客户端协商。`crawler_*` 是业务工具，不是另造的 MCP 协议方法。健康检查、限流、熔断、租户、审计和审批属于后端运行治理，也不应伪装成 MCP 标准接口。版本信息可通过 `crawler_capabilities` 查看；协议定义见 [MCP 规范](https://modelcontextprotocol.io/specification/latest) 与 [Streamable HTTP](https://modelcontextprotocol.io/specification/latest/basic/transports#streamable-http)。
+
+没有业务需求的可选能力不应为了“接口齐全”而空实现：当前不发布 Prompt、Sampling 或协议级 Task 扩展。`crawler_create_job` 创建的是本服务可恢复、可审计的领域 Job；它通过普通 Tool 返回 Job ID，再由查询 Tool 读取状态和结果。
+
 ### 本机验证：Client 自动启动 Server
 
 先按[准备并加载配置](#2-准备并加载配置)把 `.env` 加载到当前终端。以下命令会启动一个子进程 MCP Server、完成协议握手、列出工具，并实际调用 `crawler_doctor` 和 `crawler_capabilities`；不需要先运行页面、API 或 Worker：
@@ -240,12 +251,13 @@ amazon-crawler-mcp-client call crawler_run_job \
 
 | 工具组 | 工具 | 说明 |
 |---|---|---|
-| 预检与发现 | `crawler_doctor`、`crawler_capabilities`、`crawler_metrics` | 返回脱敏配置结论、能力和本地指标 |
+| 预检与发现 | `crawler_doctor`、`crawler_capabilities`、`crawler_metrics` | 返回脱敏配置结论、协议能力和当前租户指标 |
 | 执行 | `crawler_create_job`、`crawler_run_job` | 分别用于入队和自包含运行 |
-| 查询 | `crawler_list_jobs`、`crawler_get_job`、`crawler_get_results`、`crawler_get_events`、`crawler_get_deliveries` | 查询状态、证据和结果 |
-| 控制 | `crawler_pause_job`、`crawler_resume_job`、`crawler_cancel_job` | 取消必须传入 `confirm=true` |
+| 查询 | `crawler_list_jobs`、`crawler_get_job`、`crawler_get_results`、`crawler_get_events`、`crawler_get_deliveries` | 按租户查询状态、证据和带游标分页的结果 |
+| 审计 | `crawler_get_audit_events` | 返回当前租户的调用者、工具、结果、耗时和参数哈希，不保存原始秘密参数 |
+| 控制 | `crawler_pause_job`、`crawler_resume_job`、`crawler_cancel_job` | 本机取消要求 `confirm=true`；生产取消要求一次性审批回执 |
 
-Server 不接受 Cookie、代理、Redis/MySQL URL、数据库路径或任意请求头作为 Tool 参数。这些值只能由 Server 进程环境或部署平台 Secret 提供。Cookie 生产、Cookie 维护、旧任务导入导出和外部状态回写没有暴露为 MCP 工具；它们继续属于人工运维面。
+Server 不接受 Cookie、代理、Redis/MySQL URL、数据库路径、Bearer Token、签名密钥或任意请求头作为 Tool 参数。这些值只能由 Server/Client 进程环境或部署平台 Secret 提供。Cookie 生产、Cookie 维护和旧任务导入导出没有暴露为 MCP 工具；外部结果写入只有在服务端验证“租户、操作者、工具名、完整参数哈希、过期时间”一致的一次性审批回执后才允许。
 
 配置缺失时先调用 `crawler_doctor`。它会在 `blocking_issues` 中返回缺少的环境变量名和配置位置，不返回秘密值。`crawler_create_job` 和 `crawler_run_job` 会拒绝在 `configuration_ready=false` 时创建任务。
 
@@ -272,7 +284,7 @@ env_vars = [
 
 ### Streamable HTTP
 
-受控内网或后续远程部署可以启动：
+本机无认证联调可以启动：
 
 ```bash
 amazon-crawler-mcp \
@@ -290,7 +302,73 @@ amazon-crawler-mcp \
 amazon-crawler-mcp-client --url http://127.0.0.1:8000/mcp smoke
 ```
 
-当前 HTTP MCP 没有 OAuth、租户隔离、公网限流和结果级授权，因此只能绑定本机或放在已有认证网关之后，不能直接监听公网地址。STDIO 适合本机 Agent；Streamable HTTP 才是后续部署入口。
+监听非回环地址时，Server 会拒绝 `CRAWLER_MCP_AUTH_MODE=disabled`，并要求显式 Host/Origin 白名单。内网试点可以使用内置静态 Bearer 验证器：服务端只保存 Token 的 SHA-256 摘要，客户端单独持有明文 Token。
+
+服务端 Secret 示例：
+
+```dotenv
+CRAWLER_MCP_PRODUCTION=true
+CRAWLER_MCP_AUTH_MODE=static
+CRAWLER_MCP_ISSUER_URL=https://auth.example.com
+CRAWLER_MCP_RESOURCE_SERVER_URL=https://crawler.example.com/mcp
+CRAWLER_MCP_ALLOWED_HOSTS=crawler.example.com
+CRAWLER_MCP_ALLOWED_ORIGINS=https://console.example.com
+CRAWLER_MCP_STATIC_TOKENS_SHA256_JSON={"64位小写SHA256摘要":{"client_id":"automation-a","actor_id":"operator-a","tenant_id":"tenant-a","scopes":["crawler:read","crawler:run","crawler:control","crawler:cancel","crawler:audit"]}}
+CRAWLER_MCP_APPROVAL_SIGNING_KEY=至少32字节的随机密钥
+```
+
+`64位小写SHA256摘要` 是对客户端实际 Bearer Token 做 SHA-256 后得到的 64 个十六进制字符，不是 Token 本身；`client_id` 是调用程序，`actor_id` 是责任人或服务身份，`tenant_id` 决定数据隔离范围，`scopes` 决定可调用工具组。生产值必须放入 Secret 管理器，不要按示例文字原样填写。
+
+加载这些 Secret 后启动单实例服务；TLS 应由同机反向代理或可信网关终止：
+
+```bash
+amazon-crawler-mcp \
+  --transport streamable-http \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --path /mcp \
+  --json-response \
+  --stateless-http
+```
+
+scope 与权限一一对应：`crawler:read` 用于预检、能力、任务/结果/资源读取，`crawler:run` 用于创建或同步执行，`crawler:control` 用于暂停/恢复，`crawler:cancel` 只允许请求取消，`crawler:audit` 用于读取审计。生产 Token 应只给实际需要的最小集合；`*` 只适合本机开发身份。
+
+远程客户端只配置自己持有的明文 Token：
+
+```bash
+export CRAWLER_MCP_ACCESS_TOKEN='由管理员签发的实际Bearer Token'
+amazon-crawler-mcp-client --url https://crawler.example.com/mcp smoke
+```
+
+客户端 Token 不会作为命令行参数或 MCP Tool 参数出现。内置静态验证器适合受控内网和早期试点；正式公网若需要动态登录、撤销、轮换和授权服务器发现，应在可信网关/授权服务器完成 OAuth 2.1 发放，并将当前静态验证器替换为对应 Token Verifier。MCP 授权要求见[官方授权规范](https://modelcontextprotocol.io/specification/latest/basic/authorization)。
+
+非 MCP 的运维检查地址为 `/health/live` 与 `/health/ready`。它们只返回存活/就绪状态，不返回任务数和配置秘密。
+
+### 并发、限流、熔断与输出边界
+
+| 风险 | 已实现措施 | 主要配置 |
+|---|---|---|
+| 单个调用者打满服务 | 按“租户 + 操作者”的 Token Bucket 限流 | `CRAWLER_MCP_RATE_LIMIT_PER_MINUTE`、`CRAWLER_MCP_RATE_LIMIT_BURST` |
+| 同步长任务占满进程 | `crawler_run_job` 并发闸门和短排队超时；生产默认关闭同步运行，改用 `crawler_create_job` + Worker | `CRAWLER_MCP_MAX_CONCURRENT_RUNS`、`CRAWLER_MCP_RUN_QUEUE_TIMEOUT_SECONDS`、`CRAWLER_MCP_SYNC_RUN_ENABLED` |
+| Amazon 连续阻断/故障 | 按目标 Host 统计连续网络、403/429、可重试 5xx；开路后停止请求，恢复窗口后只放一个探针 | `CRAWLER_UPSTREAM_CIRCUIT_FAILURE_THRESHOLD`、`CRAWLER_UPSTREAM_CIRCUIT_RECOVERY_SECONDS` |
+| 大结果挤爆 Agent 上下文 | 结果、事件、投递和审计均带 `next_cursor`；限制单页与总输出字节，超大单条只返回哈希和大小 | `CRAWLER_MCP_MAX_PAGE_SIZE`、`CRAWLER_MCP_MAX_TOOL_OUTPUT_BYTES` |
+| 越权或误操作 | scope + 租户过滤；生产取消和外部结果写入使用短期、参数绑定、一次性审批回执 | `CRAWLER_MCP_APPROVAL_SIGNING_KEY`、`CRAWLER_MCP_APPROVAL_TTL_SECONDS` |
+
+这些限制当前是单 MCP Server 进程内限制。SQLite 部署被显式限制为 `CRAWLER_MCP_INSTANCE_COUNT=1`，生产启动还会取得与数据库对应的进程文件锁；如果未来改为共享数据库并横向扩容，还必须把限流、并发额度和熔断状态放到网关或 Redis/Durable Object 等共享控制面，不能把多个进程的本地计数相加后当成全局限制。
+
+### 高风险操作审批
+
+审批命令只应由人工运维执行；Agent Skill 不会自行签发审批。以生产取消为例，管理员先确认准确的租户、操作者和 Job ID，再签发：
+
+```bash
+amazon-crawler-mcp-approval crawler_cancel_job \
+  --tenant tenant-a \
+  --actor operator-a \
+  --arguments '{"job_id":"实际JOB_ID"}' \
+  --confirm
+```
+
+将输出中的 `approval_receipt` 作为同一次 `crawler_cancel_job` 调用参数。回执过期、参数不一致、租户/操作者不一致或重复使用都会被拒绝。对 `crawler_create_job` / `crawler_run_job` 的外部结果写入，`--arguments` 必须使用工具解析后的完整参数对象（包括值为 `null` 的默认字段；`crawler_run_job` 还包括 `timeout_seconds`），并选择非 `sqlite`/`jsonl` 的 `result_sinks`。
 
 ## 需要新 Cookie 时
 
@@ -474,6 +552,8 @@ Redis 密码包含特殊字符时同样需要 percent-encoding。只要配置了
 | `CRAWLER_DELIVERY_WORKER_ENABLED` | `true` | 独立运行结果投递 Worker 时设为 `false` |
 | `CRAWLER_REQUEST_TIMEOUT_SECONDS` | `25` | 网络延迟较高时适当增加 |
 | `CRAWLER_MIN_HOST_INTERVAL_SECONDS` | `1.5` | 控制同一站点的最小请求间隔 |
+| `CRAWLER_UPSTREAM_CIRCUIT_FAILURE_THRESHOLD` | `5` | 连续上游失败多少次后停止访问该 Host |
+| `CRAWLER_UPSTREAM_CIRCUIT_RECOVERY_SECONDS` | `60` | 熔断后等待多久才允许一次恢复探测 |
 | `CRAWLER_HTTP_TRANSPORT` | `auto` | 正常保持 `auto`；`httpx` 仅用于诊断 |
 | `CRAWLER_USER_AGENT` | Chrome 131 UA | 一般不修改；必须与 TLS/browser 模拟配置保持一致 |
 | `CRAWLER_REQUIRE_COOKIE` | `true` | 正常抓取保持 `true`；无 Cookie 模式仅限受控诊断 |
@@ -648,8 +728,9 @@ amazon-crawler-v2/
 
 ## 当前已知边界
 
-- 当前 HTTP API 和 Streamable HTTP MCP 没有登录、租户隔离、公网限流、用量配额和结果级授权，不能直接暴露到公网。
-- 当前标准状态库是 SQLite；多节点分布式部署尚未实现。
+- 普通 HTTP API/管理页面仍没有登录和租户隔离，只能绑定本机或置于可信管理网关之后；MCP 的认证和租户边界不自动保护普通 HTTP API。
+- 当前标准状态库是 SQLite，MCP 生产配置会拒绝声明多个实例；共享数据库、多节点 Worker 与全局额度尚未实现。
+- MCP 内置静态 Bearer 验证适合受控试点，不等于完整的动态 OAuth 授权服务器；公网多用户服务仍需要令牌签发、撤销、轮换和共享配额控制面。
 - 真实站点访问仍需持续验证不同国家、邮编、页面形态和限流场景，离线测试不能替代线上验收。
 - Cookie 生产代码已通过隔离测试；真实新 Cookie 的成功率仍受代理可用性和 Amazon 风控影响，不能把代码完成等同于生产资源可用。
 - 商业化前需要完成目标站点条款、数据合规、访问频率和数据使用范围审查。
@@ -657,7 +738,7 @@ amazon-crawler-v2/
 ## 安全要求
 
 - 不要提交 `.env`、Cookie、代理凭据、数据库 URL、Redis URL、原始响应或包含个人信息的数据。
-- 对外运行前必须增加认证、租户授权、审计日志、速率限制、配额和结果访问控制。
+- 对外运行必须开启 MCP 认证、最小 scope、租户映射、审计和审批；普通 HTTP 管理面不得直接暴露。
 - 外部 Cookie、Redis/MySQL 和真实站点采集都需要明确授权；本地测试通过不代表已获生产权限。
 - 证据和事件只应保存经过白名单过滤及脱敏的字段。
 

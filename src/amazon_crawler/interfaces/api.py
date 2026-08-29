@@ -43,6 +43,7 @@ class CreateJobBody(BaseModel):
     max_attempts: int | None = Field(default=None, ge=1, le=20)
     idempotency_key: str | None = Field(default=None, max_length=200)
     options: dict[str, Any] = Field(default_factory=dict)
+    confirm_external_write: bool = False
 
 
 class CookieFillBody(BaseModel):
@@ -92,7 +93,10 @@ def _error(exc: Exception, status_code: int) -> JSONResponse:
 
 
 async def _json_body(request: Request) -> dict[str, Any]:
-    if request.headers.get("content-length") and int(request.headers["content-length"]) > 1_000_000:
+    if (
+        request.headers.get("content-length")
+        and int(request.headers["content-length"]) > 1_000_000
+    ):
         raise ValueError("request body is too large")
     value = await request.json()
     if not isinstance(value, dict):
@@ -146,7 +150,7 @@ def create_app(application: Application | None = None) -> Starlette:
             {
                 "ok": True,
                 "status": "ready",
-                "version": "0.1.0",
+                "version": "0.2.0",
                 "resources": {
                     "cookie": cookie.as_public_dict(),
                     "cookie_routes": cookie_routes,
@@ -209,7 +213,9 @@ def create_app(application: Application | None = None) -> Starlette:
     async def fill_cookie_pool(request: Request) -> JSONResponse:
         body = CookieFillBody.model_validate(await _json_body(request))
         if not application.settings.cookie_operations_api_enabled:
-            raise ConflictError("Cookie acquisition API is disabled by deployment policy")
+            raise ConflictError(
+                "Cookie acquisition API is disabled by deployment policy"
+            )
         if not body.confirm_external_write:
             raise ValidationError(
                 "Cookie acquisition requires confirmation of external Amazon requests and Redis writes"
@@ -251,16 +257,29 @@ def create_app(application: Application | None = None) -> Starlette:
     async def list_jobs(request: Request) -> JSONResponse:
         limit = int(request.query_params.get("limit", "50"))
         status = request.query_params.get("status")
-        jobs = await asyncio.to_thread(application.store.list_jobs, limit=limit, status=status)
+        jobs = await asyncio.to_thread(
+            application.store.list_jobs, limit=limit, status=status
+        )
         return JSONResponse({"ok": True, "jobs": jobs})
 
     async def create_job(request: Request) -> JSONResponse:
         body = CreateJobBody.model_validate(await _json_body(request))
-        job, created = await asyncio.to_thread(application.service.create_job, **body.model_dump())
-        return JSONResponse({"ok": True, "created": created, "job": job}, status_code=201 if created else 200)
+        values = body.model_dump()
+        confirmed = bool(values.pop("confirm_external_write"))
+        job, created = await asyncio.to_thread(
+            application.service.create_job,
+            **values,
+            external_result_write_authorized=confirmed,
+        )
+        return JSONResponse(
+            {"ok": True, "created": created, "job": job},
+            status_code=201 if created else 200,
+        )
 
     async def get_job(request: Request) -> JSONResponse:
-        job = await asyncio.to_thread(application.store.get_job, request.path_params["job_id"])
+        job = await asyncio.to_thread(
+            application.store.get_job, request.path_params["job_id"]
+        )
         return JSONResponse({"ok": True, "job": job})
 
     async def results(request: Request) -> JSONResponse:
@@ -301,7 +320,9 @@ def create_app(application: Application | None = None) -> Starlette:
         return JSONResponse({"ok": True, "job": job})
 
     async def metrics(_: Request) -> JSONResponse:
-        return JSONResponse({"ok": True, "metrics": await asyncio.to_thread(application.store.metrics)})
+        return JSONResponse(
+            {"ok": True, "metrics": await asyncio.to_thread(application.store.metrics)}
+        )
 
     async def exception_handler(_: Request, exc: Exception) -> JSONResponse:
         if isinstance(exc, NotFoundError):
@@ -327,7 +348,9 @@ def create_app(application: Application | None = None) -> Starlette:
         Route("/api/v1/jobs/{job_id:str}/{action:str}", control, methods=["POST"]),
         Route("/api/v1/metrics", metrics, methods=["GET"]),
         Route("/favicon.ico", lambda _: FileResponse(static_root / "favicon.svg")),
-        Route("/assets/favicon.svg", lambda _: FileResponse(static_root / "favicon.svg")),
+        Route(
+            "/assets/favicon.svg", lambda _: FileResponse(static_root / "favicon.svg")
+        ),
         Route("/assets/styles.css", lambda _: FileResponse(static_root / "styles.css")),
         Route("/assets/app.js", lambda _: FileResponse(static_root / "app.js")),
     ]

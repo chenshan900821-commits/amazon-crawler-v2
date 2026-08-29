@@ -5,11 +5,14 @@ import asyncio
 import json
 import os
 import sys
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
+import httpx2
 from mcp import Client, StdioServerParameters
-
+from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.exceptions import MCPError
 
 REQUIRED_SMOKE_TOOLS = {
     "crawler_doctor",
@@ -19,6 +22,7 @@ REQUIRED_SMOKE_TOOLS = {
     "crawler_get_results",
     "crawler_get_events",
     "crawler_get_deliveries",
+    "crawler_get_audit_events",
     "crawler_metrics",
     "crawler_create_job",
     "crawler_run_job",
@@ -42,9 +46,7 @@ def _model(value: Any) -> Any:
     return value
 
 
-def _server_target(args: argparse.Namespace) -> str | StdioServerParameters:
-    if args.url:
-        return args.url
+def _stdio_target(args: argparse.Namespace) -> StdioServerParameters:
     server_args = [
         "-m",
         "amazon_crawler.interfaces.mcp_server",
@@ -90,11 +92,41 @@ def _tool_result(value: Any) -> dict[str, Any]:
     return payload
 
 
+def _safe_exception_message(exc: BaseException) -> str:
+    if isinstance(exc, MCPError):
+        return exc.message
+    if isinstance(exc, BaseExceptionGroup):
+        for nested in exc.exceptions:
+            message = _safe_exception_message(nested)
+            if (
+                message
+                != "MCP connection or operation failed; verify the server command or URL"
+            ):
+                return message
+    if isinstance(exc, (OSError, RuntimeError, ValueError)):
+        return str(exc)
+    return "MCP connection or operation failed; verify the server command or URL"
+
+
 async def _run(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
-    async with Client(
-        _server_target(args),
-        read_timeout_seconds=args.read_timeout,
-    ) as client:
+    async with AsyncExitStack() as stack:
+        if args.url:
+            token = os.getenv("CRAWLER_MCP_ACCESS_TOKEN", "").strip()
+            headers = {"Authorization": f"Bearer {token}"} if token else None
+            http_client = await stack.enter_async_context(
+                httpx2.AsyncClient(headers=headers)
+            )
+            transport = streamable_http_client(args.url, http_client=http_client)
+            client = await stack.enter_async_context(
+                Client(transport, read_timeout_seconds=args.read_timeout)
+            )
+        else:
+            client = await stack.enter_async_context(
+                Client(
+                    _stdio_target(args),
+                    read_timeout_seconds=args.read_timeout,
+                )
+            )
         connection = _connection(client)
         if args.command == "info":
             return {"ok": True, **connection}, True
@@ -149,9 +181,9 @@ async def _run(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                     "listed_tool_count": len(listed.tools),
                     "missing_required_tools": missing,
                     "doctor_call_ok": not doctor.is_error,
-                    "configuration_ready": (
-                        doctor.structured_content or {}
-                    ).get("configuration_ready"),
+                    "configuration_ready": (doctor.structured_content or {}).get(
+                        "configuration_ready"
+                    ),
                     "capabilities_call_ok": not capabilities.is_error,
                     "resource_count": len(resources.resources),
                     "resource_template_count": len(templates.resource_templates),
@@ -190,11 +222,7 @@ def main() -> None:
     try:
         payload, ok = asyncio.run(_run(args))
     except Exception as exc:
-        message = (
-            str(exc)
-            if isinstance(exc, (OSError, RuntimeError, ValueError))
-            else "MCP connection or operation failed; verify the server command or URL"
-        )
+        message = _safe_exception_message(exc)
         _print(
             {
                 "ok": False,

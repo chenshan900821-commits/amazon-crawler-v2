@@ -73,7 +73,9 @@ def build_application(settings: Settings | None = None) -> Application:
         try:
             import redis
         except ImportError as exc:
-            raise RuntimeError("legacy Redis result sink requires the redis package") from exc
+            raise RuntimeError(
+                "legacy Redis result sink requires the redis package"
+            ) from exc
         redis_client = redis.Redis.from_url(
             settings.legacy_result_redis_url,
             decode_responses=False,
@@ -203,6 +205,8 @@ def build_application(settings: Settings | None = None) -> Application:
     fetcher = HttpFetcher(
         timeout_seconds=settings.request_timeout_seconds,
         min_host_interval_seconds=settings.min_host_interval_seconds,
+        circuit_failure_threshold=settings.upstream_circuit_failure_threshold,
+        circuit_recovery_seconds=settings.upstream_circuit_recovery_seconds,
         max_response_bytes=settings.max_response_bytes,
         user_agent=settings.user_agent,
         context_factory=request_context,
@@ -210,22 +214,22 @@ def build_application(settings: Settings | None = None) -> Application:
     )
     evidence_store = EvidenceStore(settings.evidence_dir, settings.capture_evidence)
     product_plugins = [
-            AmazonProductPlugin(
-                fetcher=fetcher,
-                evidence_store=evidence_store,
-                require_cookie=settings.require_cookie,
-                kind=kind,
-            )
-            for kind in (
-                "amazon.product",
-                "product",
-                "product_jp",
-                "product_hw",
-                "product_hw_jp",
-                "product_time",
-                "product_time_jp",
-            )
-        ]
+        AmazonProductPlugin(
+            fetcher=fetcher,
+            evidence_store=evidence_store,
+            require_cookie=settings.require_cookie,
+            kind=kind,
+        )
+        for kind in (
+            "amazon.product",
+            "product",
+            "product_jp",
+            "product_hw",
+            "product_hw_jp",
+            "product_time",
+            "product_time_jp",
+        )
+    ]
     collection_plugins = [
         AmazonCollectionPlugin(
             kind=kind,
@@ -254,9 +258,7 @@ def build_application(settings: Settings | None = None) -> Application:
         )
         for kind in ("merchant", "merchant_home", "merchant_products")
     ]
-    plugins = PluginRegistry(
-        [*product_plugins, *collection_plugins, *merchant_plugins]
-    )
+    plugins = PluginRegistry([*product_plugins, *collection_plugins, *merchant_plugins])
     service = CrawlerService(store, plugins, result_sinks=result_sinks.names)
     worker = Worker(
         store=store,

@@ -24,6 +24,8 @@ class Settings:
     lease_seconds: int
     request_timeout_seconds: float
     min_host_interval_seconds: float
+    upstream_circuit_failure_threshold: int
+    upstream_circuit_recovery_seconds: float
     max_response_bytes: int
     user_agent: str
     http_transport: str
@@ -86,7 +88,9 @@ class Settings:
                     root / "settings" / "config.py",
                     root.parent / "settings" / "config.py",
                 ]
-                legacy_path = next((path for path in candidates if path.is_file()), candidates[0])
+                legacy_path = next(
+                    (path for path in candidates if path.is_file()), candidates[0]
+                )
             legacy = load_legacy_runtime_config(
                 legacy_path,
                 allow_external_cookie_read=_as_bool(
@@ -109,7 +113,9 @@ class Settings:
             ),
             capture_evidence=_as_bool(os.getenv("CRAWLER_CAPTURE_EVIDENCE"), False),
             worker_enabled=_as_bool(os.getenv("CRAWLER_WORKER_ENABLED"), True),
-            worker_concurrency=max(1, int(os.getenv("CRAWLER_WORKER_CONCURRENCY", "2"))),
+            worker_concurrency=max(
+                1, int(os.getenv("CRAWLER_WORKER_CONCURRENCY", "2"))
+            ),
             poll_seconds=max(0.1, float(os.getenv("CRAWLER_POLL_SECONDS", "1.0"))),
             lease_seconds=max(15, int(os.getenv("CRAWLER_LEASE_SECONDS", "90"))),
             request_timeout_seconds=max(
@@ -117,6 +123,14 @@ class Settings:
             ),
             min_host_interval_seconds=max(
                 0.0, float(os.getenv("CRAWLER_MIN_HOST_INTERVAL_SECONDS", "1.5"))
+            ),
+            upstream_circuit_failure_threshold=max(
+                1,
+                int(os.getenv("CRAWLER_UPSTREAM_CIRCUIT_FAILURE_THRESHOLD", "5")),
+            ),
+            upstream_circuit_recovery_seconds=max(
+                1.0,
+                float(os.getenv("CRAWLER_UPSTREAM_CIRCUIT_RECOVERY_SECONDS", "60")),
             ),
             max_response_bytes=max(
                 100_000, int(os.getenv("CRAWLER_MAX_RESPONSE_BYTES", "5000000"))
@@ -234,7 +248,11 @@ def _normalize_cookie_target_group(
             raise ValueError("cookie target marketplace entries must be objects")
         normalized[marketplace_id.upper()] = {}
         for postal_code, target in postal_targets.items():
-            if not isinstance(postal_code, str) or not isinstance(target, int) or target < 0:
+            if (
+                not isinstance(postal_code, str)
+                or not isinstance(target, int)
+                or target < 0
+            ):
                 raise ValueError(
                     "cookie targets require string postal codes and non-negative counts"
                 )

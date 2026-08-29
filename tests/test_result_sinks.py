@@ -114,6 +114,7 @@ class ResultSinkTests(unittest.IsolatedAsyncioTestCase):
             inputs=[asin],
             marketplace_id="US",
             options={"result_sinks": sink_names},
+            external_result_write_authorized=True,
         )
         item = self.store.claim_next("crawl-worker", 15)
         self.assertIsNotNone(item)
@@ -127,7 +128,9 @@ class ResultSinkTests(unittest.IsolatedAsyncioTestCase):
         return job["id"], None
 
     async def test_unconfigured_sink_is_rejected_before_job_creation(self) -> None:
-        service = CrawlerService(self.store, self.registry, result_sinks={"sqlite", "jsonl"})
+        service = CrawlerService(
+            self.store, self.registry, result_sinks={"sqlite", "jsonl"}
+        )
         with self.assertRaisesRegex(ValidationError, "not configured"):
             service.create_job(
                 inputs=["B000000001"],
@@ -159,7 +162,9 @@ class ResultSinkTests(unittest.IsolatedAsyncioTestCase):
         record_file = self.root / "jsonl" / "amazon.product.jsonl"
         records = [json.loads(line) for line in record_file.read_text().splitlines()]
         self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["result_id"], self.store.list_results(job_id)[0]["id"])
+        self.assertEqual(
+            records[0]["result_id"], self.store.list_results(job_id)[0]["id"]
+        )
         self.assertEqual(self.store.list_deliveries(job_id)[0]["status"], "delivered")
 
         sink = sinks.get("jsonl")
@@ -169,7 +174,9 @@ class ResultSinkTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(second["deduplicated"])
         self.assertEqual(len(record_file.read_text().splitlines()), 1)
         self.assertEqual(os.stat(self.root / "jsonl").st_mode & 0o777, 0o700)
-        self.assertEqual(os.stat(self.root / "jsonl" / ".receipts").st_mode & 0o777, 0o700)
+        self.assertEqual(
+            os.stat(self.root / "jsonl" / ".receipts").st_mode & 0o777, 0o700
+        )
         self.assertEqual(os.stat(record_file).st_mode & 0o777, 0o600)
 
     async def test_job_scoped_delivery_does_not_consume_other_outbox_rows(self) -> None:
@@ -198,7 +205,9 @@ class ResultSinkTests(unittest.IsolatedAsyncioTestCase):
             "pending",
         )
 
-    async def test_jsonl_sink_refuses_symlinked_result_and_receipt_targets(self) -> None:
+    async def test_jsonl_sink_refuses_symlinked_result_and_receipt_targets(
+        self,
+    ) -> None:
         external = self.root / "external.txt"
         external.write_text("unchanged", encoding="utf-8")
         result_root = self.root / "jsonl-symlink-result"
@@ -219,7 +228,9 @@ class ResultSinkTests(unittest.IsolatedAsyncioTestCase):
             JsonlResultSink(receipt_root).publish(delivery())
         self.assertEqual(external.read_text(encoding="utf-8"), "unchanged")
 
-    async def test_delivery_failure_retries_without_persisting_secret_text(self) -> None:
+    async def test_delivery_failure_retries_without_persisting_secret_text(
+        self,
+    ) -> None:
         job_id, _ = self._completed_job(["exploding"])
         worker = DeliveryWorker(
             store=self.store,
@@ -235,7 +246,9 @@ class ResultSinkTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("session-secret", stored)
         self.assertNotIn("user:pass", stored)
 
-    async def test_expired_delivery_lease_is_recovered_and_stale_ack_rejected(self) -> None:
+    async def test_expired_delivery_lease_is_recovered_and_stale_ack_rejected(
+        self,
+    ) -> None:
         self._completed_job(["jsonl"])
         stale = self.store.claim_delivery("dead-worker", 15)
         self.assertIsNotNone(stale)

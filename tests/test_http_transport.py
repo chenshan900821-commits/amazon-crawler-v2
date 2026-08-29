@@ -143,7 +143,9 @@ class HttpTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.code, "redirect_host_not_allowed")
         self.assertFalse(response.retryable)
 
-    async def test_cross_host_redirect_is_rejected_before_a_second_request(self) -> None:
+    async def test_cross_host_redirect_is_rejected_before_a_second_request(
+        self,
+    ) -> None:
         FakeResponse.response_status = 302
         FakeResponse.response_headers = {
             "Content-Type": "text/html",
@@ -163,7 +165,9 @@ class HttpTransportTests(unittest.IsolatedAsyncioTestCase):
             [("GET", "https://www.amazon.com/dp/B000000001")],
         )
 
-    async def test_same_host_redirect_is_followed_with_cookie_context_intact(self) -> None:
+    async def test_same_host_redirect_is_followed_with_cookie_context_intact(
+        self,
+    ) -> None:
         class SameHostRedirectSession(FakeCurlSession):
             requests: list[tuple[str, str]] = []
 
@@ -207,7 +211,9 @@ class HttpTransportTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_www_canonicalization_is_not_treated_as_external_redirect(self) -> None:
+    async def test_www_canonicalization_is_not_treated_as_external_redirect(
+        self,
+    ) -> None:
         FakeResponse.response_status = 200
         FakeCurlSession.response_url = "https://amazon.com/dp/B000000001"
         response = await self.fetcher().fetch(
@@ -247,10 +253,48 @@ class HttpTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.details["http_status"], 503)
         self.assertEqual(
             response.details["evidence"]["sha256"],
-            hashlib.sha256(FakeResponse(FakeCurlSession.response_url).content).hexdigest(),
+            hashlib.sha256(
+                FakeResponse(FakeCurlSession.response_url).content
+            ).hexdigest(),
         )
         self.assertFalse(response.details["evidence"]["captured"])
         self.assertEqual(cookie.outcomes, [ResourceOutcome.NETWORK_ERROR])
+        self.assertEqual(context._cookie_owners, {})
+
+    async def test_repeated_upstream_failures_open_host_circuit(self) -> None:
+        context = RequestContextFactory(
+            StaticCookieProvider("fixture-session=value"),
+            StaticProxyProvider(None),
+            BrowserFingerprintProvider(),
+        )
+        fetcher = HttpFetcher(
+            timeout_seconds=10,
+            min_host_interval_seconds=0,
+            circuit_failure_threshold=2,
+            circuit_recovery_seconds=60,
+            max_response_bytes=100_000,
+            user_agent="fallback",
+            context_factory=context,
+            transport_backend="curl_cffi",
+            curl_session_factory=FakeCurlSession,
+        )
+        FakeResponse.response_status = 503
+        url = "https://www.amazon.com/dp/B000000001"
+
+        first = await fetcher.fetch(
+            url, marketplace_id="US", postal_code="10001", purpose="product"
+        )
+        second = await fetcher.fetch(
+            url, marketplace_id="US", postal_code="10001", purpose="product"
+        )
+        third = await fetcher.fetch(
+            url, marketplace_id="US", postal_code="10001", purpose="product"
+        )
+
+        self.assertEqual(first.code, "upstream_retryable")
+        self.assertEqual(second.code, "upstream_retryable")
+        self.assertEqual(third.code, "upstream_circuit_open")
+        self.assertEqual(len(FakeCurlSession.requests), 2)
         self.assertEqual(context._cookie_owners, {})
 
     async def test_observer_sees_response_before_failure_classification(self) -> None:
@@ -278,9 +322,7 @@ class HttpTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_not_found_code_is_scoped_to_request_purpose(self) -> None:
         FakeCurlSession.response_url = "https://www.amazon.com/sp?seller=MISSING"
         FakeResponse.response_status = 404
-        FakeResponse.response_content = (
-            b"Sorry! We couldn't find that page. Try searching or go to Amazon's home page."
-        )
+        FakeResponse.response_content = b"Sorry! We couldn't find that page. Try searching or go to Amazon's home page."
 
         response = await self.fetcher().fetch(
             FakeCurlSession.response_url,

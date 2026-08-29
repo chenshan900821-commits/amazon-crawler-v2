@@ -13,6 +13,7 @@ from amazon_crawler.plugins.registry import PluginRegistry
 
 LEGACY_DEFAULT_MAX_ATTEMPTS = 5
 LEGACY_HOURLY_MAX_ATTEMPTS = 11
+LOCAL_RESULT_SINKS = frozenset({"sqlite", "jsonl"})
 
 
 class CrawlerService:
@@ -39,6 +40,9 @@ class CrawlerService:
         max_attempts: int | None = None,
         idempotency_key: str | None = None,
         options: dict[str, Any] | None = None,
+        external_result_write_authorized: bool = False,
+        tenant_id: str = "local",
+        created_by: str = "local",
     ) -> tuple[dict[str, Any], bool]:
         if not inputs:
             raise ValidationError("at least one task input is required")
@@ -47,7 +51,9 @@ class CrawlerService:
         try:
             mode = ExecutionMode(execution_mode)
         except ValueError as exc:
-            raise ValidationError("execution_mode must be standard, overseas, or realtime") from exc
+            raise ValidationError(
+                "execution_mode must be standard, overseas, or realtime"
+            ) from exc
         if not -100 <= priority <= 100:
             raise ValidationError("priority must be between -100 and 100")
         plugin = self.plugins.get(kind)
@@ -62,10 +68,17 @@ class CrawlerService:
         if not 1 <= effective_max_attempts <= 20:
             raise ValidationError("max_attempts must be between 1 and 20")
 
-        normalized = [plugin.normalize(value, marketplace_id, postal_code) for value in inputs]
+        normalized = [
+            plugin.normalize(value, marketplace_id, postal_code) for value in inputs
+        ]
         deduplicated = list({item.input_key: item for item in normalized}.values())
-        safe_options = self._safe_options(options or {})
-        effective_priority = 50 if mode is ExecutionMode.REALTIME and priority == 0 else priority
+        safe_options = self._safe_options(
+            options or {},
+            external_result_write_authorized=external_result_write_authorized,
+        )
+        effective_priority = (
+            50 if mode is ExecutionMode.REALTIME and priority == 0 else priority
+        )
         key_payload = {
             "kind": kind,
             "execution_mode": mode.value,
@@ -74,7 +87,13 @@ class CrawlerService:
             "max_attempts": effective_max_attempts,
             "options": safe_options,
         }
-        key = idempotency_key.strip() if idempotency_key and idempotency_key.strip() else None
+        if tenant_id != "local":
+            key_payload["tenant_id"] = tenant_id
+        key = (
+            idempotency_key.strip()
+            if idempotency_key and idempotency_key.strip()
+            else None
+        )
         if key and len(key) > 200:
             raise ValidationError("idempotency_key must be 200 characters or fewer")
         # A product-time request without an explicit observation timestamp means
@@ -88,33 +107,56 @@ class CrawlerService:
             and not any(item.as_dict().get("add_date") for item in deduplicated)
         ):
             key_payload["observation_request_id"] = uuid.uuid4().hex
+        if key:
+            storage_key = (
+                key
+                if tenant_id == "local"
+                else stable_idempotency_key({"tenant_id": tenant_id, "caller_key": key})
+            )
+        else:
+            storage_key = stable_idempotency_key(key_payload)
         return self.store.create_job(
             kind=kind,
             execution_mode=mode.value,
             priority=effective_priority,
             inputs=deduplicated,
             options=safe_options,
-            idempotency_key=key or stable_idempotency_key(key_payload),
+            idempotency_key=storage_key,
             max_attempts=effective_max_attempts,
+            tenant_id=tenant_id,
+            created_by=created_by,
         )
 
-    def _safe_options(self, options: dict[str, Any]) -> dict[str, Any]:
+    def _safe_options(
+        self,
+        options: dict[str, Any],
+        *,
+        external_result_write_authorized: bool,
+    ) -> dict[str, Any]:
         allowed = {"tags", "requested_fields", "result_sinks"}
         unexpected = sorted(set(options) - allowed)
         if unexpected:
             raise ValidationError("unsupported task options")
         if "tags" in options:
             tags = options["tags"]
-            if not isinstance(tags, list) or len(tags) > 20 or not all(
-                isinstance(tag, str) and len(tag) <= 50 for tag in tags
+            if (
+                not isinstance(tags, list)
+                or len(tags) > 20
+                or not all(isinstance(tag, str) and len(tag) <= 50 for tag in tags)
             ):
                 raise ValidationError("tags must be a list of at most 20 short strings")
         if "requested_fields" in options:
             fields = options["requested_fields"]
-            if not isinstance(fields, list) or len(fields) > 50 or not all(
-                isinstance(field, str) and len(field) <= 80 for field in fields
+            if (
+                not isinstance(fields, list)
+                or len(fields) > 50
+                or not all(
+                    isinstance(field, str) and len(field) <= 80 for field in fields
+                )
             ):
-                raise ValidationError("requested_fields must be a list of short strings")
+                raise ValidationError(
+                    "requested_fields must be a list of short strings"
+                )
         selected = options.get("result_sinks", ["sqlite"])
         if (
             not isinstance(selected, list)
@@ -128,6 +170,11 @@ class CrawlerService:
         unknown = sorted(set(selected) - self.result_sinks)
         if unknown:
             raise ValidationError("one or more result sinks are not configured")
+        external = sorted(set(selected) - LOCAL_RESULT_SINKS)
+        if external and not external_result_write_authorized:
+            raise ValidationError(
+                "external result sinks require a verified external-write approval"
+            )
         normalized = dict(options)
         normalized["result_sinks"] = sorted({"sqlite", *selected})
         return normalized
@@ -135,7 +182,7 @@ class CrawlerService:
     def capabilities(self) -> dict[str, Any]:
         return {
             "api_version": "v1",
-            "crawler_version": "0.1.0",
+            "crawler_version": "0.2.0",
             "plugins": self.plugins.capabilities(),
             "marketplaces": public_marketplaces(),
             "control": ["pause", "resume", "cancel"],

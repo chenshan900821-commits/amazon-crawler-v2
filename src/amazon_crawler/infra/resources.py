@@ -14,7 +14,11 @@ from urllib.parse import quote, urlparse
 
 import httpx
 
-from amazon_crawler.domain.ports import CookieProvider, FingerprintProvider, ProxyProvider
+from amazon_crawler.domain.ports import (
+    CookieProvider,
+    FingerprintProvider,
+    ProxyProvider,
+)
 from amazon_crawler.domain.resources import (
     CookieLease,
     FingerprintProfile,
@@ -24,6 +28,10 @@ from amazon_crawler.domain.resources import (
     ResourceOutcome,
     SecretText,
 )
+from amazon_crawler.infra.safe_logging import install_http_log_redaction
+
+
+install_http_log_redaction()
 
 
 def _anonymous_id(prefix: str, value: str) -> str:
@@ -159,7 +167,9 @@ class LegacyRedisCookieProvider:
             entries = await asyncio.to_thread(self._load_entries)
             grouped: dict[tuple[str, str], list[_CookieEntry]] = {}
             for entry in entries:
-                grouped.setdefault((entry.marketplace_id, entry.postal_code), []).append(entry)
+                grouped.setdefault(
+                    (entry.marketplace_id, entry.postal_code), []
+                ).append(entry)
             self._cache = {key: tuple(value) for key, value in grouped.items()}
             self._by_lease_id = {entry.lease_id: entry for entry in entries}
             self._last_refresh_monotonic = self._clock()
@@ -171,16 +181,24 @@ class LegacyRedisCookieProvider:
 
     async def _ensure_fresh(self) -> None:
         now = self._clock()
-        if self._initialized and now - self._last_refresh_monotonic < self._refresh_seconds:
+        if (
+            self._initialized
+            and now - self._last_refresh_monotonic < self._refresh_seconds
+        ):
             return
         async with self._refresh_lock:
             now = self._clock()
-            if self._initialized and now - self._last_refresh_monotonic < self._refresh_seconds:
+            if (
+                self._initialized
+                and now - self._last_refresh_monotonic < self._refresh_seconds
+            ):
                 return
             entries = await asyncio.to_thread(self._load_entries)
             grouped: dict[tuple[str, str], list[_CookieEntry]] = {}
             for entry in entries:
-                grouped.setdefault((entry.marketplace_id, entry.postal_code), []).append(entry)
+                grouped.setdefault(
+                    (entry.marketplace_id, entry.postal_code), []
+                ).append(entry)
             self._cache = {key: tuple(value) for key, value in grouped.items()}
             self._by_lease_id = {entry.lease_id: entry for entry in entries}
             self._last_refresh_monotonic = now
@@ -197,7 +215,9 @@ class LegacyRedisCookieProvider:
             if until > now and lease_id in self._by_lease_id
         }
 
-    def _eligible(self, marketplace_id: str, postal_code: str | None) -> list[_CookieEntry]:
+    def _eligible(
+        self, marketplace_id: str, postal_code: str | None
+    ) -> list[_CookieEntry]:
         now = self._clock()
         groups: Iterable[tuple[_CookieEntry, ...]]
         if postal_code:
@@ -253,7 +273,11 @@ class LegacyRedisCookieProvider:
         postal = postal_code.strip() if postal_code and postal_code.strip() else None
         await self._ensure_fresh()
         eligible = self._eligible(market, postal)
-        entry = self._chooser.choice(eligible) if eligible else await self._direct_lookup(market, postal)
+        entry = (
+            self._chooser.choice(eligible)
+            if eligible
+            else await self._direct_lookup(market, postal)
+        )
         if entry is None:
             return None
         return CookieLease(
@@ -268,7 +292,9 @@ class LegacyRedisCookieProvider:
         if lease.lease_id not in self._by_lease_id:
             return
         if outcome in {ResourceOutcome.BLOCKED, ResourceOutcome.AUTH_INVALID}:
-            self._quarantined_until[lease.lease_id] = self._clock() + self._quarantine_seconds
+            self._quarantined_until[lease.lease_id] = (
+                self._clock() + self._quarantine_seconds
+            )
         elif outcome is ResourceOutcome.SUCCESS:
             self._quarantined_until.pop(lease.lease_id, None)
 
@@ -368,8 +394,12 @@ class RoutedCookieProvider:
         return await self.health()
 
     async def health(self) -> ResourceHealth:
-        reports = await asyncio.gather(*(provider.health() for provider in self._providers()))
-        refreshed = [report.last_refresh_at for report in reports if report.last_refresh_at]
+        reports = await asyncio.gather(
+            *(provider.health() for provider in self._providers())
+        )
+        refreshed = [
+            report.last_refresh_at for report in reports if report.last_refresh_at
+        ]
         return ResourceHealth(
             provider="routed_cookie",
             available=sum(report.available for report in reports),
@@ -498,9 +528,7 @@ class RotatingProxyProvider:
     ) -> None:
         self._loader = loader
         self._quarantine_seconds = max(1.0, quarantine_seconds)
-        self._load_failure_cooldown_seconds = max(
-            0.1, load_failure_cooldown_seconds
-        )
+        self._load_failure_cooldown_seconds = max(0.1, load_failure_cooldown_seconds)
         self._clock = clock
         self._queue: deque[str] = deque()
         self._by_id: dict[str, str] = {}
@@ -511,7 +539,10 @@ class RotatingProxyProvider:
 
     async def _load_if_empty(self, purpose: str, marketplace_id: str) -> None:
         now = self._clock()
-        if any(self._quarantined_until.get(_anonymous_id("proxy", url), 0.0) <= now for url in self._queue):
+        if any(
+            self._quarantined_until.get(_anonymous_id("proxy", url), 0.0) <= now
+            for url in self._queue
+        ):
             return
         if self._load_retry_after > now:
             raise RuntimeError("proxy pool refresh is cooling down")
@@ -545,7 +576,9 @@ class RotatingProxyProvider:
                 self._load_retry_after = (
                     self._clock() + self._load_failure_cooldown_seconds
                 )
-                raise RuntimeError("proxy extraction service returned no usable proxies")
+                raise RuntimeError(
+                    "proxy extraction service returned no usable proxies"
+                )
             self._load_retry_after = 0.0
             self._last_refresh_at = datetime.now(UTC)
 
@@ -564,13 +597,17 @@ class RotatingProxyProvider:
         if lease.lease_id not in self._by_id:
             return
         if outcome in {ResourceOutcome.PROXY_ERROR, ResourceOutcome.BLOCKED}:
-            self._quarantined_until[lease.lease_id] = self._clock() + self._quarantine_seconds
+            self._quarantined_until[lease.lease_id] = (
+                self._clock() + self._quarantine_seconds
+            )
         elif outcome is ResourceOutcome.SUCCESS:
             self._quarantined_until.pop(lease.lease_id, None)
 
     async def health(self) -> ResourceHealth:
         now = self._clock()
-        quarantined = sum(1 for until in self._quarantined_until.values() if until > now)
+        quarantined = sum(
+            1 for until in self._quarantined_until.values() if until > now
+        )
         return ResourceHealth(
             provider="rotating_proxy",
             available=max(0, len(self._by_id) - quarantined),
@@ -681,9 +718,16 @@ class RequestContextFactory:
         if reports:
             await asyncio.gather(*reports)
 
-    async def cookie_route_health(self) -> dict[str, dict[str, str | int | bool | None]]:
-        providers = {"default": self.cookie_provider, **self.cookie_providers_by_purpose}
-        reports = await asyncio.gather(*(provider.health() for provider in providers.values()))
+    async def cookie_route_health(
+        self,
+    ) -> dict[str, dict[str, str | int | bool | None]]:
+        providers = {
+            "default": self.cookie_provider,
+            **self.cookie_providers_by_purpose,
+        }
+        reports = await asyncio.gather(
+            *(provider.health() for provider in providers.values())
+        )
         return {
             route: report.as_public_dict()
             for route, report in zip(providers, reports, strict=True)

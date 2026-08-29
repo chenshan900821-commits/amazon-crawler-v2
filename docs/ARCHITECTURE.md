@@ -66,8 +66,16 @@ API、UI 和 Agent 只能选择 `/capabilities` 已返回的名称。目标 URL�
 
 Cookie 消费与 Cookie 生产分离。普通服务只按站点/邮编从 Provider 取租约；维护任务在显式确认后才做地址切换、二次页面确认和 TTL 写入。失败 Cookie/代理进入隔离期，不会把原值写进状态库、日志、API、界面、证据或 Agent 输出。
 
-Agent Skill 只能创建、查看、暂停、恢复、经确认取消任务，以及查询结果、事件和投递状态。它不能读取配置秘密、刷新外部 Cookie、任意选择连接串或直接发布生产结果。
+Agent Skill 只能创建、查看、暂停、恢复、经确认取消任务，以及查询结果、事件和投递状态。它不能读取配置秘密、刷新外部 Cookie、任意选择连接串、签发审批回执或直接发布生产结果。
 
-## 8. 当前完成边界
+## 8. MCP 协议与运行控制面
+
+MCP 官方 SDK 负责 `initialize`、Tool/Resource 发现与调用、协议版本协商、STDIO 和 Streamable HTTP；`crawler_*` 只定义爬虫业务能力。健康检查、限流、熔断和审批是服务运行控制，不扩展为伪标准 MCP 方法。
+
+HTTP Bearer Token 映射为 `client_id + actor_id + tenant_id + scopes`。所有 Job、结果、事件、投递和指标查询在 SQLite 层追加 `tenant_id` 条件；调用参数只以 SHA-256 进入审计。生产取消以及向 Redis/MySQL 等外部结果 sink 写入，需要服务端验证 HMAC 回执中的操作者、租户、动作、完整参数哈希、过期时间和一次性 nonce。
+
+MCP 单进程控制包括按调用身份限流、同步运行并发闸门、分页与输出字节上限。Amazon HTTP 层按 Host 熔断连续网络错误、403/429 和可重试 5xx。SQLite 部署只允许一个生产 MCP Server，并使用进程文件锁防止同一状态库被两个 Server 同时持有；未来横向扩容必须将数据库、额度和熔断状态迁移到共享控制面。
+
+## 9. 当前完成边界
 
 11 类任务、Cookie/代理、旧 MySQL/Redis 桥、管理界面、Agent Skill、断点和多 sink 代码路径已经实现并通过自动测试；本机旧 MySQL/Redis 真实回环也已通过。旧 `54b5…` 指纹的实时同响应矩阵曾达到 23/33、0 差异，但外围审计发现相同 Worker ID 被误复用时缺少唯一租约世代；任务和 outbox 均已增加 lease token 校验。当前 `f637…` 指纹下的可晋级矩阵因此为 0/33，旧批次仅作历史回归证据。新矩阵未到 33/33 且 US/JP/双邮编覆盖未同时满足前，不得把整体状态标为完成。

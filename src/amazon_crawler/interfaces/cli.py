@@ -66,6 +66,11 @@ def _add_job_arguments(command: argparse.ArgumentParser) -> None:
         choices=["sqlite", "jsonl", "legacy_redis", "legacy_mysql"],
         help="repeat to fan one result out to multiple configured destinations",
     )
+    command.add_argument(
+        "--confirm-external-result-write",
+        action="store_true",
+        help="confirm configured Redis/MySQL result delivery",
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -101,7 +106,15 @@ def _parser() -> argparse.ArgumentParser:
     listing.add_argument("--status")
     listing.add_argument("--limit", type=int, default=50)
 
-    for name in ("show", "pause", "resume", "cancel", "results", "events", "deliveries"):
+    for name in (
+        "show",
+        "pause",
+        "resume",
+        "cancel",
+        "results",
+        "events",
+        "deliveries",
+    ):
         command = sub.add_parser(name)
         command.add_argument("job_id")
         if name in {"results", "events", "deliveries"}:
@@ -199,6 +212,7 @@ def _create_job(app: Any, args: argparse.Namespace) -> tuple[dict[str, Any], boo
         max_attempts=args.max_attempts,
         idempotency_key=args.idempotency_key,
         options={"result_sinks": args.result_sink} if args.result_sink else None,
+        external_result_write_authorized=args.confirm_external_result_write,
     )
 
 
@@ -262,7 +276,12 @@ def main() -> None:
                 return
             _print({"ok": True, "created": created, "job": job})
         elif args.command == "list":
-            _print({"ok": True, "jobs": app.store.list_jobs(limit=args.limit, status=args.status)})
+            _print(
+                {
+                    "ok": True,
+                    "jobs": app.store.list_jobs(limit=args.limit, status=args.status),
+                }
+            )
         elif args.command == "show":
             _print({"ok": True, "job": app.store.get_job(args.job_id)})
         elif args.command == "pause":
@@ -272,9 +291,19 @@ def main() -> None:
         elif args.command == "cancel":
             _print({"ok": True, "job": app.store.request_cancel(args.job_id)})
         elif args.command == "results":
-            _print({"ok": True, "results": app.store.list_results(args.job_id, limit=args.limit)})
+            _print(
+                {
+                    "ok": True,
+                    "results": app.store.list_results(args.job_id, limit=args.limit),
+                }
+            )
         elif args.command == "events":
-            _print({"ok": True, "events": app.store.list_events(args.job_id, limit=args.limit)})
+            _print(
+                {
+                    "ok": True,
+                    "events": app.store.list_events(args.job_id, limit=args.limit),
+                }
+            )
         elif args.command == "deliveries":
             _print(
                 {
@@ -295,9 +324,7 @@ def main() -> None:
                 )
             harvester = app.cookie_harvesters.get(args.pool)
             if harvester is None:
-                raise ValidationError(
-                    f"cookie pool {args.pool!r} is not configured"
-                )
+                raise ValidationError(f"cookie pool {args.pool!r} is not configured")
             postal_code = args.postal_code or marketplace_default_postal_code(
                 args.marketplace
             )
@@ -365,7 +392,9 @@ def main() -> None:
                 try:
                     import redis
                 except ImportError as exc:
-                    raise ValidationError("Redis export requires the redis package") from exc
+                    raise ValidationError(
+                        "Redis export requires the redis package"
+                    ) from exc
                 client = redis.Redis.from_url(
                     settings.legacy_result_redis_url,
                     decode_responses=False,

@@ -54,18 +54,16 @@ class FakeRedis:
 
 
 class ResourceTests(unittest.IsolatedAsyncioTestCase):
-    async def test_default_browser_fingerprints_have_coherent_platform_headers(self) -> None:
+    async def test_default_browser_fingerprints_have_coherent_platform_headers(
+        self,
+    ) -> None:
         profiles = BrowserFingerprintProvider()._profiles
         rendered = {profile.profile_id: profile.headers for profile in profiles}
         self.assertIn("Windows NT", rendered["chrome_windows"]["User-Agent"])
-        self.assertEqual(
-            rendered["chrome_windows"]["sec-ch-ua-platform"], '"Windows"'
-        )
+        self.assertEqual(rendered["chrome_windows"]["sec-ch-ua-platform"], '"Windows"')
         self.assertIn("Macintosh", rendered["chrome_macos"]["User-Agent"])
         self.assertNotIn("Windows NT", rendered["chrome_macos"]["User-Agent"])
-        self.assertEqual(
-            rendered["chrome_macos"]["sec-ch-ua-platform"], '"macOS"'
-        )
+        self.assertEqual(rendered["chrome_macos"]["sec-ch-ua-platform"], '"macOS"')
         self.assertTrue(all(profile.impersonate == "chrome131" for profile in profiles))
 
     async def test_secret_text_and_public_health_never_render_secret(self) -> None:
@@ -102,10 +100,10 @@ class ResourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(any_us.marketplace_id, "US")
         self.assertIn(any_us.postal_code, {"10001", "94105"})
 
-    async def test_legacy_provider_maps_short_code_to_amazon_marketplace_id(self) -> None:
-        redis = FakeRedis(
-            {"cookie:ATVPDKIKX0DER:10001:1": '{"session-id": "one"}'}
-        )
+    async def test_legacy_provider_maps_short_code_to_amazon_marketplace_id(
+        self,
+    ) -> None:
+        redis = FakeRedis({"cookie:ATVPDKIKX0DER:10001:1": '{"session-id": "one"}'})
         provider = LegacyRedisCookieProvider(
             redis,
             marketplace_aliases={"US": "ATVPDKIKX0DER"},
@@ -174,7 +172,9 @@ class ResourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(lease.postal_code, "94105")
         self.assertEqual(lease.cookie_header.reveal(), "session-id=new")
 
-    async def test_cookie_routing_matches_legacy_product_and_static_routes(self) -> None:
+    async def test_cookie_routing_matches_legacy_product_and_static_routes(
+        self,
+    ) -> None:
         default = StaticCookieProvider("pool=default")
         overseas = StaticCookieProvider("pool=overseas")
         merchant = StaticCookieProvider("pool=merchant")
@@ -219,7 +219,9 @@ class ResourceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("pool=", json.dumps(route_health))
 
-    async def test_bootstrap_routes_rank_compatibility_alias_to_merchant_cookie(self) -> None:
+    async def test_bootstrap_routes_rank_compatibility_alias_to_merchant_cookie(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
             settings = replace(
@@ -248,7 +250,9 @@ class ResourceTests(unittest.IsolatedAsyncioTestCase):
             {"merchant", "rank_list", "rank_list_jp"},
         )
 
-    async def test_rotating_proxy_quarantines_failed_lease_without_exposure(self) -> None:
+    async def test_rotating_proxy_quarantines_failed_lease_without_exposure(
+        self,
+    ) -> None:
         calls: list[tuple[str, str]] = []
 
         async def loader(purpose: str, marketplace_id: str) -> list[str]:
@@ -271,7 +275,9 @@ class ResourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("192.0.2", public)
         self.assertNotIn("password", public)
 
-    async def test_proxy_refresh_failure_is_single_flight_and_recovers_after_cooldown(self) -> None:
+    async def test_proxy_refresh_failure_is_single_flight_and_recovers_after_cooldown(
+        self,
+    ) -> None:
         clock = FakeClock()
         calls = 0
 
@@ -297,7 +303,9 @@ class ResourceTests(unittest.IsolatedAsyncioTestCase):
             await provider.acquire("product", "US")
         self.assertEqual(calls, 2)
 
-    async def test_partial_resource_acquisition_releases_cookie_without_quarantine(self) -> None:
+    async def test_partial_resource_acquisition_releases_cookie_without_quarantine(
+        self,
+    ) -> None:
         class TrackingCookieProvider(StaticCookieProvider):
             def __init__(self) -> None:
                 super().__init__("session-id=fixture")
@@ -336,15 +344,20 @@ class ResourceTests(unittest.IsolatedAsyncioTestCase):
             password="p@ss word",
             transport=httpx.MockTransport(handler),
         )
-        proxies = await loader("product", "US")
+        with self.assertLogs("httpx", level="INFO") as captured:
+            proxies = await loader("product", "US")
         self.assertEqual(len(proxies), 2)
         self.assertEqual(
             proxies[0],
             "http://proxy-user:p%40ss%20word@192.0.2.10:8000",
         )
         self.assertNotIn("sensitive", repr(loader))
+        self.assertNotIn("sensitive", " ".join(captured.output))
+        self.assertIn("?<redacted>", " ".join(captured.output))
 
-    async def test_proxy_extraction_rejects_malformed_provider_json_safely(self) -> None:
+    async def test_proxy_extraction_rejects_malformed_provider_json_safely(
+        self,
+    ) -> None:
         async def handler(_: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,

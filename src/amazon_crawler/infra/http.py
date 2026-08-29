@@ -95,6 +95,55 @@ class HostRateLimiter:
             self._last_request[host] = time.monotonic()
 
 
+@dataclass(slots=True)
+class _CircuitState:
+    failures: int = 0
+    opened_at: float | None = None
+    probe_in_flight: bool = False
+
+
+class HostCircuitBreaker:
+    """Bound repeated upstream failures without hiding durable retry state."""
+
+    def __init__(self, failure_threshold: int, recovery_seconds: float) -> None:
+        self._threshold = max(1, int(failure_threshold))
+        self._recovery_seconds = max(1.0, float(recovery_seconds))
+        self._states: dict[str, _CircuitState] = {}
+        self._lock = asyncio.Lock()
+
+    @staticmethod
+    def _host(url: str) -> str:
+        return (urlparse(url).hostname or "unknown").lower()
+
+    async def allow(self, url: str) -> tuple[bool, float | None]:
+        host = self._host(url)
+        async with self._lock:
+            state = self._states.setdefault(host, _CircuitState())
+            if state.opened_at is None:
+                return True, None
+            elapsed = time.monotonic() - state.opened_at
+            if elapsed < self._recovery_seconds:
+                return False, round(self._recovery_seconds - elapsed, 3)
+            if state.probe_in_flight:
+                return False, self._recovery_seconds
+            state.probe_in_flight = True
+            return True, None
+
+    async def success(self, url: str) -> None:
+        host = self._host(url)
+        async with self._lock:
+            self._states[host] = _CircuitState()
+
+    async def failure(self, url: str) -> None:
+        host = self._host(url)
+        async with self._lock:
+            state = self._states.setdefault(host, _CircuitState())
+            state.probe_in_flight = False
+            state.failures += 1
+            if state.failures >= self._threshold:
+                state.opened_at = time.monotonic()
+
+
 class HttpFetcher:
     supports_response_observer = True
 
@@ -103,6 +152,8 @@ class HttpFetcher:
         *,
         timeout_seconds: float,
         min_host_interval_seconds: float,
+        circuit_failure_threshold: int = 5,
+        circuit_recovery_seconds: float = 60.0,
         max_response_bytes: int,
         user_agent: str,
         proxy: str | None = None,
@@ -114,6 +165,10 @@ class HttpFetcher:
         self._timeout = timeout_seconds
         self._max_response_bytes = max_response_bytes
         self._limiter = HostRateLimiter(min_host_interval_seconds)
+        self._circuit = HostCircuitBreaker(
+            circuit_failure_threshold,
+            circuit_recovery_seconds,
+        )
         self._base_headers = {
             "User-Agent": user_agent,
             "Accept": "text/html,application/xhtml+xml",
@@ -217,7 +272,9 @@ class HttpFetcher:
             status_code=response.status_code,
             content=response.content,
             text=response.text,
-            headers={str(key).lower(): str(value) for key, value in response.headers.items()},
+            headers={
+                str(key).lower(): str(value) for key, value in response.headers.items()
+            },
         )
 
     async def _send_curl(
@@ -246,14 +303,18 @@ class HttpFetcher:
                 response = await client.request(method.upper(), url, json=json_body)
         except Exception as exc:
             name = type(exc).__name__
-            code = "proxy_error" if proxy and "proxy" in name.lower() else "network_error"
+            code = (
+                "proxy_error" if proxy and "proxy" in name.lower() else "network_error"
+            )
             raise _TransportFailure(code, name) from exc
         return _TransportResponse(
             url=str(response.url),
             status_code=int(response.status_code),
             content=bytes(response.content),
             text=str(response.text),
-            headers={str(key).lower(): str(value) for key, value in response.headers.items()},
+            headers={
+                str(key).lower(): str(value) for key, value in response.headers.items()
+            },
         )
 
     async def fetch(
@@ -269,7 +330,6 @@ class HttpFetcher:
         extra_headers: dict[str, str] | None = None,
         response_observer: Callable[[ResponseObservation], None] | None = None,
     ) -> FetchResponse | CrawlFailure:
-        await self._limiter.wait(url)
         try:
             context = await self._context_factory.acquire(
                 purpose=purpose,
@@ -284,12 +344,24 @@ class HttpFetcher:
                 details={"error_type": type(exc).__name__},
             )
         if require_cookie and context.cookie is None:
+            await self._context_factory.report(context, ResourceOutcome.SUCCESS)
             return CrawlFailure(
                 "cookie_unavailable",
                 "no healthy cookie is available for the marketplace and postal code",
                 retryable=True,
                 details={"marketplace_id": marketplace_id, "postal_code": postal_code},
             )
+
+        allowed, retry_after = await self._circuit.allow(url)
+        if not allowed:
+            await self._context_factory.report(context, ResourceOutcome.SUCCESS)
+            return CrawlFailure(
+                "upstream_circuit_open",
+                "Amazon requests are temporarily paused after repeated upstream failures",
+                retryable=True,
+                details={"retry_after_seconds": retry_after},
+            )
+        await self._limiter.wait(url)
 
         headers = dict(self._base_headers)
         headers.update(self._purpose_headers(purpose, method))
@@ -305,7 +377,8 @@ class HttpFetcher:
                 {
                     key: value
                     for key, value in extra_headers.items()
-                    if key.lower() not in {"authorization", "cookie", "proxy-authorization"}
+                    if key.lower()
+                    not in {"authorization", "cookie", "proxy-authorization"}
                 }
             )
         if context.cookie:
@@ -343,13 +416,12 @@ class HttpFetcher:
                     break
                 target = urljoin(response.url, location)
                 parsed_target = urlparse(target)
-                target_host = (parsed_target.hostname or "").lower().removeprefix(
-                    "www."
+                target_host = (
+                    (parsed_target.hostname or "").lower().removeprefix("www.")
                 )
                 if parsed_target.scheme != "https" or target_host != initial_host:
-                    await self._context_factory.report(
-                        context, ResourceOutcome.BLOCKED
-                    )
+                    await self._circuit.success(url)
+                    await self._context_factory.report(context, ResourceOutcome.BLOCKED)
                     return CrawlFailure(
                         "redirect_host_not_allowed",
                         "the upstream response attempted an unsafe redirect",
@@ -358,6 +430,7 @@ class HttpFetcher:
                     )
                 redirect_count += 1
                 if redirect_count > 5:
+                    await self._circuit.failure(url)
                     await self._context_factory.report(
                         context, ResourceOutcome.NETWORK_ERROR
                     )
@@ -376,7 +449,12 @@ class HttpFetcher:
                 request_url = target
                 await self._limiter.wait(request_url)
                 response = await send()
+        except asyncio.CancelledError:
+            await self._circuit.failure(url)
+            await self._context_factory.report(context, ResourceOutcome.NETWORK_ERROR)
+            raise
         except _TransportFailure as exc:
+            await self._circuit.failure(url)
             outcome = (
                 ResourceOutcome.PROXY_ERROR
                 if exc.code == "proxy_error"
@@ -415,8 +493,11 @@ class HttpFetcher:
                 # nothing.
                 pass
 
-        final_host = (urlparse(response.url).hostname or "").lower().removeprefix("www.")
+        final_host = (
+            (urlparse(response.url).hostname or "").lower().removeprefix("www.")
+        )
         if final_host != initial_host:
+            await self._circuit.success(url)
             await self._context_factory.report(context, ResourceOutcome.BLOCKED)
             return CrawlFailure(
                 "redirect_host_not_allowed",
@@ -426,6 +507,7 @@ class HttpFetcher:
             )
 
         if len(response.content) > self._max_response_bytes:
+            await self._circuit.success(url)
             await self._context_factory.report(context, ResourceOutcome.PARSE_ERROR)
             return CrawlFailure(
                 "response_too_large",
@@ -434,6 +516,7 @@ class HttpFetcher:
                 details=self._response_evidence(response),
             )
         if response.status_code == 407:
+            await self._circuit.success(url)
             await self._context_factory.report(context, ResourceOutcome.PROXY_ERROR)
             return CrawlFailure(
                 "proxy_authentication_error",
@@ -442,6 +525,7 @@ class HttpFetcher:
                 details=self._response_evidence(response),
             )
         if response.status_code in {403, 429}:
+            await self._circuit.failure(url)
             await self._context_factory.report(context, ResourceOutcome.BLOCKED)
             return CrawlFailure(
                 "upstream_blocked",
@@ -450,6 +534,7 @@ class HttpFetcher:
                 details=self._response_evidence(response),
             )
         if response.status_code in {408, 425, 500, 502, 503, 504}:
+            await self._circuit.failure(url)
             await self._context_factory.report(context, ResourceOutcome.NETWORK_ERROR)
             return CrawlFailure(
                 "upstream_retryable",
@@ -457,11 +542,10 @@ class HttpFetcher:
                 retryable=True,
                 details=self._response_evidence(response),
             )
+        await self._circuit.success(url)
         if response.status_code in {404, 410}:
             sample = response.text[:200_000].lower()
-            if any(
-                marker in sample for marker in LEGACY_NON_SUCCESS_NOT_FOUND_MARKERS
-            ):
+            if any(marker in sample for marker in LEGACY_NON_SUCCESS_NOT_FOUND_MARKERS):
                 await self._context_factory.report(context, ResourceOutcome.PARSE_ERROR)
                 not_found_code = {
                     "merchant": "merchant_has_no_products",

@@ -46,7 +46,9 @@ class ProxyProvider(Protocol):
 
 
 class FingerprintProvider(Protocol):
-    async def acquire(self, purpose: str, marketplace_id: str) -> FingerprintProfile: ...
+    async def acquire(
+        self, purpose: str, marketplace_id: str
+    ) -> FingerprintProfile: ...
 
 
 class CrawlPlugin(Protocol):
@@ -78,13 +80,31 @@ class StateStore(Protocol):
         options: dict[str, Any],
         idempotency_key: str,
         max_attempts: int,
+        tenant_id: str = "local",
+        created_by: str = "local",
     ) -> tuple[dict[str, Any], bool]: ...
 
-    def list_jobs(self, *, limit: int = 50, status: str | None = None) -> list[dict[str, Any]]: ...
+    def list_jobs(
+        self,
+        *,
+        limit: int = 50,
+        status: str | None = None,
+        tenant_id: str | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]: ...
 
-    def get_job(self, job_id: str) -> dict[str, Any]: ...
+    def get_job(
+        self, job_id: str, *, tenant_id: str | None = None
+    ) -> dict[str, Any]: ...
 
-    def list_results(self, job_id: str, *, limit: int = 100) -> list[dict[str, Any]]: ...
+    def list_results(
+        self,
+        job_id: str,
+        *,
+        limit: int = 100,
+        tenant_id: str | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]: ...
 
     def claim_next(
         self,
@@ -107,11 +127,26 @@ class StateStore(Protocol):
         details: dict[str, Any] | None = None,
     ) -> None: ...
 
-    def request_pause(self, job_id: str) -> dict[str, Any]: ...
+    def request_pause(
+        self,
+        job_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]: ...
 
-    def resume(self, job_id: str) -> dict[str, Any]: ...
+    def resume(
+        self,
+        job_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]: ...
 
-    def request_cancel(self, job_id: str) -> dict[str, Any]: ...
+    def request_cancel(
+        self,
+        job_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]: ...
 
     def recover_expired_leases(self) -> int: ...
 
@@ -135,5 +170,10 @@ class StateStore(Protocol):
     def recover_expired_delivery_leases(self) -> int: ...
 
     def list_deliveries(
-        self, job_id: str | None = None, *, limit: int = 100
+        self,
+        job_id: str | None = None,
+        *,
+        limit: int = 100,
+        tenant_id: str | None = None,
+        offset: int = 0,
     ) -> list[dict[str, Any]]: ...

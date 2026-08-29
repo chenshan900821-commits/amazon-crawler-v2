@@ -1,14 +1,15 @@
 [project]
 name = "amazon-crawler-v2"
-version = "0.1.0"
+version = "0.2.0"
 description = "Resumable, observable Amazon crawler with Web, MCP, and Agent interfaces"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "curl-cffi>=0.16,<1",
   "httpx>=0.27,<1",
+  "httpx2>=2.12,<3",
   "lxml>=5,<7",
-  "mcp>=2,<3",
+  "mcp>=2.1,<2.2",
   "pydantic>=2.10,<3",
   "redis>=5,<7",
   "sqlalchemy>=2,<3",
@@ -28,6 +29,7 @@ legacy-parity = [
 amazon-crawler = "amazon_crawler.interfaces.cli:main"
 amazon-crawler-mcp = "amazon_crawler.interfaces.mcp_server:main"
 amazon-crawler-mcp-client = "amazon_crawler.interfaces.mcp_client:main"
+amazon-crawler-mcp-approval = "amazon_crawler.interfaces.mcp_approval:main"
 
 [build-system]
 requires = ["hatchling"]

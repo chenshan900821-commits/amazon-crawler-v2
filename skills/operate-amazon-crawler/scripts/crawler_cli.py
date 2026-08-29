@@ -29,7 +29,11 @@ ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def fail(message: str) -> None:
-    print(json.dumps({"ok": False, "error": {"type": "SkillPolicyError", "message": message}}))
+    print(
+        json.dumps(
+            {"ok": False, "error": {"type": "SkillPolicyError", "message": message}}
+        )
+    )
     raise SystemExit(2)
 
 
@@ -101,8 +105,9 @@ def main() -> None:
             )
     if confirmation in args:
         if not selected_sinks & external_sinks:
-            fail("external result confirmation was supplied without a legacy result sink")
-        args.remove(confirmation)
+            fail(
+                "external result confirmation was supplied without a legacy result sink"
+            )
 
     os.chdir(PROJECT_ROOT)
     sys.path.insert(0, str(PROJECT_ROOT / "src"))

@@ -58,6 +58,8 @@ class SQLiteStore:
                     CREATE TABLE IF NOT EXISTS jobs (
                         id TEXT PRIMARY KEY,
                         idempotency_key TEXT NOT NULL UNIQUE,
+                        tenant_id TEXT NOT NULL DEFAULT 'local',
+                        created_by TEXT NOT NULL DEFAULT 'local',
                         kind TEXT NOT NULL,
                         execution_mode TEXT NOT NULL,
                         status TEXT NOT NULL,
@@ -140,6 +142,31 @@ class SQLiteStore:
                         UNIQUE(result_id, sink_name)
                     );
 
+                    CREATE TABLE IF NOT EXISTS mcp_audit_events (
+                        id TEXT PRIMARY KEY,
+                        tenant_id TEXT NOT NULL,
+                        actor_id TEXT NOT NULL,
+                        client_id TEXT NOT NULL,
+                        tool_name TEXT NOT NULL,
+                        arguments_sha256 TEXT NOT NULL,
+                        request_id TEXT,
+                        status TEXT NOT NULL,
+                        error_code TEXT,
+                        latency_ms INTEGER,
+                        created_at TEXT NOT NULL,
+                        finished_at TEXT
+                    );
+
+                    CREATE TABLE IF NOT EXISTS mcp_approval_consumptions (
+                        nonce TEXT PRIMARY KEY,
+                        tenant_id TEXT NOT NULL,
+                        actor_id TEXT NOT NULL,
+                        action TEXT NOT NULL,
+                        parameters_sha256 TEXT NOT NULL,
+                        expires_at TEXT NOT NULL,
+                        consumed_at TEXT NOT NULL
+                    );
+
                     CREATE INDEX IF NOT EXISTS idx_items_claim
                     ON job_items(status, available_at, job_id, seq);
                     CREATE INDEX IF NOT EXISTS idx_events_job
@@ -150,7 +177,25 @@ class SQLiteStore:
                     ON result_outbox(status, available_at, created_at);
                     CREATE INDEX IF NOT EXISTS idx_result_outbox_job
                     ON result_outbox(job_id, created_at);
+                    CREATE INDEX IF NOT EXISTS idx_mcp_audit_tenant
+                    ON mcp_audit_events(tenant_id, created_at DESC);
                     """
+                )
+                self._ensure_column(
+                    connection,
+                    "jobs",
+                    "tenant_id",
+                    "TEXT NOT NULL DEFAULT 'local'",
+                )
+                self._ensure_column(
+                    connection,
+                    "jobs",
+                    "created_by",
+                    "TEXT NOT NULL DEFAULT 'local'",
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_jobs_tenant "
+                    "ON jobs(tenant_id, created_at DESC)"
                 )
                 self._ensure_column(connection, "job_items", "lease_token", "TEXT")
                 self._ensure_column(connection, "result_outbox", "lease_token", "TEXT")
@@ -188,9 +233,7 @@ class SQLiteStore:
             str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
         }
         if column not in columns:
-            connection.execute(
-                f"ALTER TABLE {table} ADD COLUMN {column} {declaration}"
-            )
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
     def _event(
         self,
@@ -205,7 +248,13 @@ class SQLiteStore:
             INSERT INTO job_events(job_id, item_id, event_type, payload_json, created_at)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (job_id, item_id, event_type, json.dumps(payload or {}, ensure_ascii=False), iso()),
+            (
+                job_id,
+                item_id,
+                event_type,
+                json.dumps(payload or {}, ensure_ascii=False),
+                iso(),
+            ),
         )
 
     def create_job(
@@ -218,6 +267,8 @@ class SQLiteStore:
         options: dict[str, Any],
         idempotency_key: str,
         max_attempts: int,
+        tenant_id: str = "local",
+        created_by: str = "local",
     ) -> tuple[dict[str, Any], bool]:
         now = iso()
         job_id = f"job_{uuid.uuid4().hex}"
@@ -228,17 +279,23 @@ class SQLiteStore:
             ).fetchone()
             if existing:
                 connection.commit()
-                return self.get_job(str(existing["id"])), False
+                return self.get_job(
+                    str(existing["id"]),
+                    tenant_id=tenant_id,
+                ), False
             connection.execute(
                 """
                 INSERT INTO jobs(
-                    id, idempotency_key, kind, execution_mode, status, priority,
+                    id, idempotency_key, tenant_id, created_by,
+                    kind, execution_mode, status, priority,
                     options_json, total_items, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
                     idempotency_key,
+                    tenant_id,
+                    created_by,
                     kind,
                     execution_mode,
                     priority,
@@ -260,14 +317,16 @@ class SQLiteStore:
                         job_id,
                         seq,
                         normalized.input_key,
-                        json.dumps(normalized.as_dict(), ensure_ascii=False, sort_keys=True),
+                        json.dumps(
+                            normalized.as_dict(), ensure_ascii=False, sort_keys=True
+                        ),
                         max_attempts,
                         now,
                     ),
                 )
             self._event(connection, job_id, "job.created", {"items": len(inputs)})
             connection.commit()
-        return self.get_job(job_id), True
+        return self.get_job(job_id, tenant_id=tenant_id), True
 
     def _job_dict(self, row: sqlite3.Row) -> dict[str, Any]:
         value = dict(row)
@@ -286,21 +345,40 @@ class SQLiteStore:
         }
         return value
 
-    def list_jobs(self, *, limit: int = 50, status: str | None = None) -> list[dict[str, Any]]:
+    def list_jobs(
+        self,
+        *,
+        limit: int = 50,
+        status: str | None = None,
+        tenant_id: str | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
         query = "SELECT * FROM jobs"
         params: list[Any] = []
+        conditions: list[str] = []
+        if tenant_id is not None:
+            conditions.append("tenant_id = ?")
+            params.append(tenant_id)
         if status:
-            query += " WHERE status = ?"
+            conditions.append("status = ?")
             params.append(status)
-        query += " ORDER BY created_at DESC LIMIT ?"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.append(max(1, min(limit, 500)))
+        params.append(max(0, int(offset)))
         with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [self._job_dict(row) for row in rows]
 
-    def get_job(self, job_id: str) -> dict[str, Any]:
+    def get_job(self, job_id: str, *, tenant_id: str | None = None) -> dict[str, Any]:
         with self._connect() as connection:
-            row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            query = "SELECT * FROM jobs WHERE id = ?"
+            params: list[Any] = [job_id]
+            if tenant_id is not None:
+                query += " AND tenant_id = ?"
+                params.append(tenant_id)
+            row = connection.execute(query, params).fetchone()
             if not row:
                 raise NotFoundError(f"job not found: {job_id}")
             items = connection.execute(
@@ -319,16 +397,32 @@ class SQLiteStore:
             item.pop("input_json", None)
         return value
 
-    def list_results(self, job_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+    def list_results(
+        self,
+        job_id: str,
+        *,
+        limit: int = 100,
+        tenant_id: str | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
         with self._connect() as connection:
-            if not connection.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,)).fetchone():
+            job_query = "SELECT 1 FROM jobs WHERE id = ?"
+            job_params: list[Any] = [job_id]
+            if tenant_id is not None:
+                job_query += " AND tenant_id = ?"
+                job_params.append(tenant_id)
+            if not connection.execute(job_query, job_params).fetchone():
                 raise NotFoundError(f"job not found: {job_id}")
             rows = connection.execute(
                 """
                 SELECT id, item_id, input_key, schema_version, data_json, evidence_json, collected_at
-                FROM results WHERE job_id = ? ORDER BY collected_at, id LIMIT ?
+                FROM results WHERE job_id = ? ORDER BY collected_at, id LIMIT ? OFFSET ?
                 """,
-                (job_id, max(1, min(limit, 1000))),
+                (
+                    job_id,
+                    max(1, min(limit, 1000)),
+                    max(0, int(offset)),
+                ),
             ).fetchall()
         return [
             {
@@ -343,16 +437,32 @@ class SQLiteStore:
             for row in rows
         ]
 
-    def list_events(self, job_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+    def list_events(
+        self,
+        job_id: str,
+        *,
+        limit: int = 100,
+        tenant_id: str | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
         with self._connect() as connection:
-            if not connection.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,)).fetchone():
+            job_query = "SELECT 1 FROM jobs WHERE id = ?"
+            job_params: list[Any] = [job_id]
+            if tenant_id is not None:
+                job_query += " AND tenant_id = ?"
+                job_params.append(tenant_id)
+            if not connection.execute(job_query, job_params).fetchone():
                 raise NotFoundError(f"job not found: {job_id}")
             rows = connection.execute(
                 """
                 SELECT id, item_id, event_type, payload_json, created_at
-                FROM job_events WHERE job_id = ? ORDER BY id DESC LIMIT ?
+                FROM job_events WHERE job_id = ? ORDER BY id DESC LIMIT ? OFFSET ?
                 """,
-                (job_id, max(1, min(limit, 500))),
+                (
+                    job_id,
+                    max(1, min(limit, 500)),
+                    max(0, int(offset)),
+                ),
             ).fetchall()
         return [
             {
@@ -527,7 +637,9 @@ class SQLiteStore:
             )
         return cursor.rowcount == 1
 
-    def _verify_owner(self, connection: sqlite3.Connection, item: ClaimedItem) -> sqlite3.Row:
+    def _verify_owner(
+        self, connection: sqlite3.Connection, item: ClaimedItem
+    ) -> sqlite3.Row:
         row = connection.execute(
             "SELECT * FROM job_items WHERE id = ?", (item.id,)
         ).fetchone()
@@ -538,7 +650,9 @@ class SQLiteStore:
             or row["lease_owner"] != item.lease_owner
             or row["lease_token"] != item.lease_token
         ):
-            raise ConflictError("stale worker result rejected because the item lease changed")
+            raise ConflictError(
+                "stale worker result rejected because the item lease changed"
+            )
         return row
 
     def complete_item(self, item: ClaimedItem, result: CrawlResult) -> None:
@@ -638,7 +752,9 @@ class SQLiteStore:
     ) -> str:
         if not followup.inputs:
             raise ValueError("a follow-up job must contain at least one input")
-        deduplicated = list({value.input_key: value for value in followup.inputs}.values())
+        deduplicated = list(
+            {value.input_key: value for value in followup.inputs}.values()
+        )
         idempotency_key = f"followup:{parent.id}:{position}:{followup.kind}"
         existing = connection.execute(
             "SELECT id FROM jobs WHERE idempotency_key = ?", (idempotency_key,)
@@ -647,6 +763,12 @@ class SQLiteStore:
             return str(existing["id"])
         now = iso()
         job_id = f"job_{uuid.uuid4().hex}"
+        parent_job = connection.execute(
+            "SELECT tenant_id, created_by FROM jobs WHERE id = ?",
+            (parent.job_id,),
+        ).fetchone()
+        if parent_job is None:
+            raise ValueError("parent job is unavailable")
         options = {
             "parent_job_id": parent.job_id,
             "parent_item_id": parent.id,
@@ -658,13 +780,16 @@ class SQLiteStore:
         connection.execute(
             """
             INSERT INTO jobs(
-                id, idempotency_key, kind, execution_mode, status, priority,
+                id, idempotency_key, tenant_id, created_by,
+                kind, execution_mode, status, priority,
                 options_json, total_items, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
                 idempotency_key,
+                parent_job["tenant_id"],
+                parent_job["created_by"],
                 followup.kind,
                 followup.execution_mode,
                 followup.priority,
@@ -687,7 +812,9 @@ class SQLiteStore:
                     job_id,
                     seq,
                     normalized.input_key,
-                    json.dumps(normalized.as_dict(), ensure_ascii=False, sort_keys=True),
+                    json.dumps(
+                        normalized.as_dict(), ensure_ascii=False, sort_keys=True
+                    ),
                     followup.max_attempts,
                     now,
                 ),
@@ -740,7 +867,12 @@ class SQLiteStore:
                         lease_expires_at = NULL,
                         last_error_code = ?, last_error = ? WHERE id = ?
                     """,
-                    (iso(now + timedelta(seconds=backoff_seconds)), code, message[:2000], item.id),
+                    (
+                        iso(now + timedelta(seconds=backoff_seconds)),
+                        code,
+                        message[:2000],
+                        item.id,
+                    ),
                 )
                 event_type = "item.retry_scheduled"
                 payload = {
@@ -765,7 +897,9 @@ class SQLiteStore:
                     "details": details or {},
                 }
             self._event(connection, item.job_id, event_type, payload, item.id)
-            self._refresh_job(connection, item.job_id, last_error=(code, message[:2000]))
+            self._refresh_job(
+                connection, item.job_id, last_error=(code, message[:2000])
+            )
             self._reconcile_controls(connection)
             connection.commit()
 
@@ -792,7 +926,9 @@ class SQLiteStore:
             """,
             (job_id,),
         ).fetchone()
-        checkpoint_seq = (int(open_row["first_open"]) - 1) if open_row["first_open"] else total
+        checkpoint_seq = (
+            (int(open_row["first_open"]) - 1) if open_row["first_open"] else total
+        )
         status = force_status
         if not status and counts.get("pending", 0) + counts.get("running", 0) == 0:
             current_status = connection.execute(
@@ -845,10 +981,20 @@ class SQLiteStore:
         if status in {"succeeded", "partial", "failed"}:
             self._event(connection, job_id, f"job.{status}", {"counts": counts})
 
-    def request_pause(self, job_id: str) -> dict[str, Any]:
+    def request_pause(
+        self,
+        job_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            query = "SELECT status FROM jobs WHERE id = ?"
+            params: list[Any] = [job_id]
+            if tenant_id is not None:
+                query += " AND tenant_id = ?"
+                params.append(tenant_id)
+            row = connection.execute(query, params).fetchone()
             if not row:
                 raise NotFoundError(f"job not found: {job_id}")
             if row["status"] in {"pending", "running"}:
@@ -859,18 +1005,33 @@ class SQLiteStore:
                 self._event(connection, job_id, "job.pause_requested")
                 self._reconcile_controls(connection)
             connection.commit()
-        return self.get_job(job_id)
+        return self.get_job(job_id, tenant_id=tenant_id)
 
-    def resume(self, job_id: str) -> dict[str, Any]:
+    def resume(
+        self,
+        job_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            query = "SELECT status FROM jobs WHERE id = ?"
+            params: list[Any] = [job_id]
+            if tenant_id is not None:
+                query += " AND tenant_id = ?"
+                params.append(tenant_id)
+            row = connection.execute(query, params).fetchone()
             if not row:
                 raise NotFoundError(f"job not found: {job_id}")
             if row["status"] in {"paused", "pause_requested"}:
-                new_status = "running" if connection.execute(
-                    "SELECT 1 FROM job_items WHERE job_id = ? AND status = 'running'", (job_id,)
-                ).fetchone() else "pending"
+                new_status = (
+                    "running"
+                    if connection.execute(
+                        "SELECT 1 FROM job_items WHERE job_id = ? AND status = 'running'",
+                        (job_id,),
+                    ).fetchone()
+                    else "pending"
+                )
                 connection.execute(
                     "UPDATE jobs SET status = ?, updated_at = ?, finished_at = NULL WHERE id = ?",
                     (new_status, iso(), job_id),
@@ -879,12 +1040,22 @@ class SQLiteStore:
             elif row["status"] not in {"pending", "running"}:
                 raise ConflictError(f"cannot resume a {row['status']} job")
             connection.commit()
-        return self.get_job(job_id)
+        return self.get_job(job_id, tenant_id=tenant_id)
 
-    def request_cancel(self, job_id: str) -> dict[str, Any]:
+    def request_cancel(
+        self,
+        job_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            query = "SELECT status FROM jobs WHERE id = ?"
+            params: list[Any] = [job_id]
+            if tenant_id is not None:
+                query += " AND tenant_id = ?"
+                params.append(tenant_id)
+            row = connection.execute(query, params).fetchone()
             if not row:
                 raise NotFoundError(f"job not found: {job_id}")
             if row["status"] not in {"cancelled", "succeeded", "partial", "failed"}:
@@ -895,7 +1066,7 @@ class SQLiteStore:
                 self._event(connection, job_id, "job.cancel_requested")
                 self._reconcile_controls(connection)
             connection.commit()
-        return self.get_job(job_id)
+        return self.get_job(job_id, tenant_id=tenant_id)
 
     def _recover_expired_deliveries(self, connection: sqlite3.Connection) -> int:
         now = iso()
@@ -1036,9 +1207,7 @@ class SQLiteStore:
             )
         return row
 
-    def heartbeat_delivery(
-        self, delivery: ClaimedDelivery, lease_seconds: int
-    ) -> bool:
+    def heartbeat_delivery(self, delivery: ClaimedDelivery, lease_seconds: int) -> bool:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -1100,7 +1269,9 @@ class SQLiteStore:
             retry = int(row["attempts"]) < int(row["max_attempts"])
             next_status = "pending" if retry else "dead_letter"
             backoff_seconds = min(900, 2 ** max(0, int(row["attempts"]) - 1))
-            available_at = iso(now + timedelta(seconds=backoff_seconds)) if retry else iso(now)
+            available_at = (
+                iso(now + timedelta(seconds=backoff_seconds)) if retry else iso(now)
+            )
             connection.execute(
                 """
                 UPDATE result_outbox
@@ -1114,7 +1285,9 @@ class SQLiteStore:
             self._event(
                 connection,
                 delivery.job_id,
-                "result.delivery_retry_scheduled" if retry else "result.delivery_dead_letter",
+                "result.delivery_retry_scheduled"
+                if retry
+                else "result.delivery_dead_letter",
                 {
                     "delivery_id": delivery.id,
                     "sink": delivery.sink_name,
@@ -1126,24 +1299,51 @@ class SQLiteStore:
             connection.commit()
 
     def list_deliveries(
-        self, job_id: str | None = None, *, limit: int = 100
+        self,
+        job_id: str | None = None,
+        *,
+        limit: int = 100,
+        tenant_id: str | None = None,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         query = """
-            SELECT id, result_id, job_id, item_id, sink_name, status, attempts,
-                   max_attempts, available_at, delivered_at, last_error,
-                   receipt_json, created_at, updated_at
-            FROM result_outbox
+            SELECT result_outbox.id, result_outbox.result_id, result_outbox.job_id,
+                   result_outbox.item_id, result_outbox.sink_name,
+                   result_outbox.status, result_outbox.attempts,
+                   result_outbox.max_attempts, result_outbox.available_at,
+                   result_outbox.delivered_at, result_outbox.last_error,
+                   receipt_json, result_outbox.created_at, result_outbox.updated_at
+            FROM result_outbox JOIN jobs ON jobs.id = result_outbox.job_id
         """
         params: list[Any] = []
+        conditions: list[str] = []
         if job_id is not None:
-            query += " WHERE job_id = ?"
+            conditions.append("result_outbox.job_id = ?")
             params.append(job_id)
-        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        if tenant_id is not None:
+            conditions.append("jobs.tenant_id = ?")
+            params.append(tenant_id)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += (
+            " ORDER BY result_outbox.created_at DESC, result_outbox.id DESC "
+            "LIMIT ? OFFSET ?"
+        )
         params.append(max(1, min(int(limit), 1000)))
+        params.append(max(0, int(offset)))
         with self._connect() as connection:
-            if job_id is not None and not connection.execute(
-                "SELECT 1 FROM jobs WHERE id = ?", (job_id,)
-            ).fetchone():
+            job_query = "SELECT 1 FROM jobs WHERE id = ?"
+            job_params: list[Any] = [job_id]
+            if tenant_id is not None:
+                job_query += " AND tenant_id = ?"
+                job_params.append(tenant_id)
+            if (
+                job_id is not None
+                and not connection.execute(
+                    job_query,
+                    job_params,
+                ).fetchone()
+            ):
                 raise NotFoundError(f"job not found: {job_id}")
             rows = connection.execute(query, params).fetchall()
         values: list[dict[str, Any]] = []
@@ -1153,29 +1353,49 @@ class SQLiteStore:
             values.append(value)
         return values
 
-    def metrics(self) -> dict[str, Any]:
+    def metrics(self, *, tenant_id: str | None = None) -> dict[str, Any]:
         with self._connect() as connection:
+            where = " WHERE tenant_id = ?" if tenant_id is not None else ""
+            params: tuple[Any, ...] = (tenant_id,) if tenant_id is not None else ()
             jobs = {
                 row["status"]: int(row["count"])
                 for row in connection.execute(
-                    "SELECT status, COUNT(*) AS count FROM jobs GROUP BY status"
+                    f"SELECT status, COUNT(*) AS count FROM jobs{where} GROUP BY status",
+                    params,
                 ).fetchall()
             }
             failures = [
                 {"code": row["last_error_code"], "count": int(row["count"])}
                 for row in connection.execute(
-                    """
-                    SELECT last_error_code, COUNT(*) AS count FROM job_items
-                    WHERE last_error_code IS NOT NULL GROUP BY last_error_code
+                    f"""
+                    SELECT job_items.last_error_code, COUNT(*) AS count
+                    FROM job_items JOIN jobs ON jobs.id = job_items.job_id
+                    WHERE job_items.last_error_code IS NOT NULL
+                    {"AND jobs.tenant_id = ?" if tenant_id is not None else ""}
+                    GROUP BY job_items.last_error_code
                     ORDER BY count DESC
-                    """
+                    """,
+                    params,
                 ).fetchall()
             ]
-            result_rows = connection.execute("SELECT data_json FROM results").fetchall()
+            result_rows = connection.execute(
+                f"""
+                SELECT results.data_json FROM results
+                JOIN jobs ON jobs.id = results.job_id
+                {"WHERE jobs.tenant_id = ?" if tenant_id is not None else ""}
+                """,
+                params,
+            ).fetchall()
             deliveries = {
                 row["status"]: int(row["count"])
                 for row in connection.execute(
-                    "SELECT status, COUNT(*) AS count FROM result_outbox GROUP BY status"
+                    f"""
+                    SELECT result_outbox.status, COUNT(*) AS count
+                    FROM result_outbox JOIN jobs ON jobs.id = result_outbox.job_id
+                    {"WHERE jobs.tenant_id = ?" if tenant_id is not None else ""}
+                    GROUP BY result_outbox.status
+                    """,
+                    params,
                 ).fetchall()
             }
         coverages: list[float] = []
@@ -1196,6 +1416,134 @@ class SQLiteStore:
             else None,
             "parser_versions": parser_versions,
             "deliveries_by_status": deliveries,
+        }
+
+    def healthcheck(self) -> bool:
+        with self._connect() as connection:
+            row = connection.execute("SELECT 1 AS ok").fetchone()
+        return bool(row and row["ok"] == 1)
+
+    def start_mcp_audit(
+        self,
+        *,
+        audit_id: str,
+        tenant_id: str,
+        actor_id: str,
+        client_id: str,
+        tool_name: str,
+        arguments_sha256: str,
+        request_id: str | None,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO mcp_audit_events(
+                    id, tenant_id, actor_id, client_id, tool_name,
+                    arguments_sha256, request_id, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'started', ?)
+                """,
+                (
+                    audit_id,
+                    tenant_id,
+                    actor_id,
+                    client_id,
+                    tool_name,
+                    arguments_sha256,
+                    request_id,
+                    iso(),
+                ),
+            )
+
+    def finish_mcp_audit(
+        self,
+        audit_id: str,
+        *,
+        status: str,
+        latency_ms: int,
+        error_code: str | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE mcp_audit_events
+                SET status = ?, error_code = ?, latency_ms = ?, finished_at = ?
+                WHERE id = ?
+                """,
+                (status, error_code, max(0, latency_ms), iso(), audit_id),
+            )
+
+    def list_mcp_audit_events(
+        self,
+        *,
+        tenant_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, tenant_id, actor_id, client_id, tool_name,
+                       arguments_sha256, request_id, status, error_code,
+                       latency_ms, created_at, finished_at
+                FROM mcp_audit_events
+                WHERE tenant_id = ?
+                ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?
+                """,
+                (
+                    tenant_id,
+                    max(1, min(int(limit), 500)),
+                    max(0, int(offset)),
+                ),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def consume_mcp_approval(
+        self,
+        *,
+        nonce: str,
+        tenant_id: str,
+        actor_id: str,
+        action: str,
+        parameters_sha256: str,
+        expires_at: str,
+    ) -> None:
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO mcp_approval_consumptions(
+                        nonce, tenant_id, actor_id, action,
+                        parameters_sha256, expires_at, consumed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        nonce,
+                        tenant_id,
+                        actor_id,
+                        action,
+                        parameters_sha256,
+                        expires_at,
+                        iso(),
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ConflictError("approval receipt has already been consumed") from exc
+
+    def prune_mcp_security_state(self, *, audit_retention_days: int) -> dict[str, int]:
+        audit_cutoff = iso(utc_now() - timedelta(days=max(1, audit_retention_days)))
+        now = iso()
+        with self._connect() as connection:
+            audit = connection.execute(
+                "DELETE FROM mcp_audit_events WHERE created_at < ?",
+                (audit_cutoff,),
+            ).rowcount
+            approvals = connection.execute(
+                "DELETE FROM mcp_approval_consumptions WHERE expires_at < ?",
+                (now,),
+            ).rowcount
+        return {
+            "audit_events_deleted": max(0, int(audit)),
+            "approval_receipts_deleted": max(0, int(approvals)),
         }
 
 

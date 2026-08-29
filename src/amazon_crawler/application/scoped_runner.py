@@ -12,6 +12,8 @@ async def run_scoped_job(
     job_id: str,
     *,
     timeout_seconds: float,
+    result_limit_per_job: int = 1000,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     """Run one root job and its durable follow-up lineage without draining other work."""
 
@@ -33,20 +35,18 @@ async def run_scoped_job(
                 app.store.list_events,
                 current_id,
                 limit=500,
+                tenant_id=tenant_id,
             )
             for event in events:
                 if event["event_type"] != "job.followup_created":
                     continue
                 child_job_id = event["payload"].get("child_job_id")
-                if (
-                    isinstance(child_job_id, str)
-                    and child_job_id not in scoped_job_ids
-                ):
+                if isinstance(child_job_id, str) and child_job_id not in scoped_job_ids:
                     scoped_job_ids.append(child_job_id)
             discovery_index += 1
 
         jobs = [
-            await asyncio.to_thread(app.store.get_job, scoped_id)
+            await asyncio.to_thread(app.store.get_job, scoped_id, tenant_id=tenant_id)
             for scoped_id in scoped_job_ids
         ]
         if all(job["status"] in terminal_states for job in jobs):
@@ -71,7 +71,7 @@ async def run_scoped_job(
         await asyncio.sleep(min(1.0, max(0.1, app.settings.poll_seconds)))
 
     jobs = [
-        await asyncio.to_thread(app.store.get_job, scoped_id)
+        await asyncio.to_thread(app.store.get_job, scoped_id, tenant_id=tenant_id)
         for scoped_id in scoped_job_ids
     ]
     root_job = jobs[0]
@@ -87,7 +87,8 @@ async def run_scoped_job(
         scoped_results = await asyncio.to_thread(
             app.store.list_results,
             scoped_id,
-            limit=1000,
+            limit=max(1, min(int(result_limit_per_job), 1000)),
+            tenant_id=tenant_id,
         )
         results.extend({"job_id": scoped_id, **result} for result in scoped_results)
         deliveries.extend(
@@ -95,6 +96,7 @@ async def run_scoped_job(
                 app.store.list_deliveries,
                 scoped_id,
                 limit=1000,
+                tenant_id=tenant_id,
             )
         )
     statuses = [scoped_job["status"] for scoped_job in jobs]
