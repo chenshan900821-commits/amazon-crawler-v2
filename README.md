@@ -161,7 +161,7 @@ SQLite 标准结果保存在 `.data/crawler.db`；选择 `jsonl` 结果去向后
 在 Codex 中可以显式调用：
 
 ```text
-$operate-amazon-crawler 为 US 站点创建一个已获授权的商品采集任务，并报告任务状态和结果数量。
+$operate-amazon-crawler 采集 US 站商品 B07FZ8S74R，配送邮编使用 10001；等待任务完成，并报告任务状态、结果数量、标题、评分和证据哈希。
 ```
 
 Agent Skill 在已连接 `amazon-crawler` MCP 时优先使用 `crawler_run_job`，否则使用确定性包装脚本的 `run`。两条路径共用同一个应用服务：完成配置检查后，创建任务、启动只处理该任务的临时 Worker、等待终态、处理该任务的结果投递并返回结果，然后自动退出。因此普通 Agent 采集不要求用户预先启动网页、API 或常驻 Worker。
@@ -190,6 +190,62 @@ python skills/operate-amazon-crawler/scripts/crawler_cli.py show JOB_ID
 python skills/operate-amazon-crawler/scripts/crawler_cli.py results JOB_ID
 python skills/operate-amazon-crawler/scripts/crawler_cli.py events JOB_ID
 ```
+
+### Agent Skill 端到端示例与真实结果
+
+上面的自然语言请求不只是“生成一条命令”。Agent 会先执行 `doctor`；配置缺失时只报告需要补齐的环境变量名，不会要求用户在对话中粘贴秘密。配置通过后，已连接 MCP 时调用 `crawler_run_job`，否则调用 Skill 自带的安全包装脚本。两条路径都会启动任务范围内的临时 Worker、等待终态、读取结果，然后退出。
+
+可以不依赖 Agent 界面，直接复现 Skill 的后备执行路径。`YOUR_REQUEST_ID` 应替换成调用方本次请求的稳定编号；重试同一次业务请求时复用它，新请求使用新编号：
+
+```bash
+python skills/operate-amazon-crawler/scripts/crawler_cli.py run B07FZ8S74R \
+  --marketplace US \
+  --postal-code 10001 \
+  --max-attempts 3 \
+  --idempotency-key YOUR_REQUEST_ID \
+  --timeout-seconds 240
+```
+
+2026-08-29 使用仓库本机 `.env` 中已授权、未提交的 Cookie/代理配置进行了真实 Amazon US 站验证。第一次上游请求出现可重试 `network_error`，第二次自动重试成功。下面是实际返回的脱敏节选；商品页面内容会变化，因此标题、评分、响应大小和哈希不应被当成固定测试值：
+
+```json
+{
+  "ok": true,
+  "created": true,
+  "completed": true,
+  "lineage_status": "succeeded",
+  "job": {
+    "id": "job_faf30b929a1645f49902681865d2a3c7",
+    "status": "succeeded",
+    "total_items": 1,
+    "succeeded_items": 1,
+    "failed_items": 0,
+    "checkpoint_seq": 1,
+    "items": [{"attempts": 2, "status": "succeeded"}]
+  },
+  "results": [{
+    "data": {
+      "asin": "B07FZ8S74R",
+      "title": "Echo Dot (3rd Gen, 2018 release) - Smart speaker with Alexa - Charcoal",
+      "rating": "4.7 out of 5 stars",
+      "schema_version": "amazon.product.v2"
+    },
+    "evidence": {
+      "http_status": 200,
+      "bytes": 1564297,
+      "sha256": "d422cbfc849eeb8beac26383d103048c8334a392871a9f2c84aedd6eac156b92"
+    }
+  }],
+  "runner": {
+    "mode": "job_scoped_in_process_worker",
+    "started": true,
+    "consumed_other_jobs": false,
+    "stopped_reason": "terminal"
+  }
+}
+```
+
+判断 Skill 是否真正完成，不能只看 `ok=true` 或 `created=true`。本例同时满足 `completed=true`、`lineage_status=succeeded`、全部 Job 到达终态、`succeeded_items=1`、`results` 非空、证据为 HTTP 200，以及 `runner.stopped_reason=terminal`。如果最终是 `partial` 或 `failed`，Agent 必须如实报告失败项，不能把“流程执行完了”描述成“数据采集成功”。
 
 搜索任务的 `results` 外层是一条“页面结果信封”，真实搜索行数在 `results[0].data.row_count`，商品列表在 `results[0].data.items`；不能把外层数组长度误当成搜索商品数量。完整安全边界和输入契约见 [`skills/operate-amazon-crawler/SKILL.md`](skills/operate-amazon-crawler/SKILL.md)。
 
@@ -224,6 +280,31 @@ amazon-crawler-mcp-client smoke
 - `checks.doctor_call_ok=true` 和 `checks.capabilities_call_ok=true`；
 - `checks.configuration_ready=true` 才表示抓取所需配置已补齐。
 
+2026-08-29 在项目根目录按“准备并加载配置”加载 `.env` 后，STDIO Client 自动拉起 Server 的实际 `smoke` 摘要如下：
+
+```json
+{
+  "ok": true,
+  "protocol_version": "2026-07-28",
+  "checks": {
+    "handshake": true,
+    "listed_tool_count": 13,
+    "missing_required_tools": [],
+    "doctor_call_ok": true,
+    "capabilities_call_ok": true,
+    "configuration_ready": true,
+    "resource_count": 1,
+    "resource_template_count": 2
+  },
+  "server_info": {
+    "name": "amazon-crawler",
+    "version": "0.2.0"
+  }
+}
+```
+
+如果这里握手成功但 `configuration_ready=false`，说明 MCP 协议链路可用，但启动 Client 的当前终端没有获得完整的 `CRAWLER_*` 环境变量；返回到“准备并加载配置”重新加载 `.env`。这时不能创建任务，也不能把协议握手成功描述为爬虫可用。
+
 查看完整工具定义和参数 JSON Schema：
 
 ```bash
@@ -246,6 +327,62 @@ amazon-crawler-mcp-client call crawler_run_job \
 ```
 
 `crawler_run_job` 与 CLI 的 `run` 使用同一个 scoped runner，只处理该根任务及其派生任务，不会消费其他排队任务。`B0XXXXXXXX`、`YOUR_REQUEST_ID` 都是说明性占位符，必须替换成真实 ASIN 和调用方自己的稳定请求编号。
+
+### MCP Tool 端到端示例与真实结果
+
+下面的本机 STDIO 调用不需要预先运行网页、API 或 Worker。Client 自动启动 MCP Server，Server 中的 `crawler_run_job` 再启动任务范围内的临时 Worker：
+
+```bash
+amazon-crawler-mcp-client call crawler_run_job \
+  --arguments '{"inputs":["B07FZ8S74R"],"kind":"product","marketplace_id":"US","postal_code":"10001","max_attempts":3,"idempotency_key":"YOUR_REQUEST_ID","timeout_seconds":240}'
+```
+
+2026-08-29 对同一公开商品进行了独立的 MCP 真实请求。第一次请求遇到可重试网络错误，第二次自动恢复；MCP Tool 总耗时约 29 秒。以下是实际响应的脱敏节选：
+
+```json
+{
+  "ok": true,
+  "protocol_version": "2026-07-28",
+  "tool": "crawler_run_job",
+  "result": {
+    "is_error": false,
+    "structured_content": {
+      "created": true,
+      "completed": true,
+      "lineage_status": "succeeded",
+      "job": {
+        "id": "job_4d077f808a2143d7bb069c34609c26ca",
+        "status": "succeeded",
+        "total_items": 1,
+        "succeeded_items": 1,
+        "failed_items": 0,
+        "items": [{"attempts": 2, "status": "succeeded"}]
+      },
+      "results": [{
+        "data": {
+          "asin": "B07FZ8S74R",
+          "title": "Echo Dot (3rd Gen, 2018 release) - Smart speaker with Alexa - Charcoal",
+          "rating": "4.7 out of 5 stars",
+          "schema_version": "amazon.product.v2"
+        },
+        "evidence": {
+          "http_status": 200,
+          "bytes": 1563695,
+          "sha256": "923ea9cbdda731ddfa1c0d7bece8a9b1141eb49e99b408bf22bded1fa789ee58"
+        }
+      }],
+      "runner": {
+        "mode": "job_scoped_in_process_worker",
+        "started": true,
+        "consumed_other_jobs": false,
+        "stopped_reason": "terminal"
+      }
+    }
+  }
+}
+```
+
+这里有三层不同的成功证据：外层 `ok=true` 证明 Client/协议流程完成，`result.is_error=false` 证明 Tool 调用没有返回 MCP 错误，`structured_content.lineage_status=succeeded` 加上非空 `results` 和 HTTP 200 证据才证明本次采集成功。`created=true` 单独只证明任务已经持久化，不能作为采集完成证据。
 
 ### MCP 工具边界
 
