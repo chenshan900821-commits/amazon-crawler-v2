@@ -14,21 +14,19 @@ from mcp.types import TextResourceContents
 
 from amazon_crawler.bootstrap import build_application
 from amazon_crawler.config import Settings
-from amazon_crawler.interfaces.mcp_server import create_mcp_server
 from amazon_crawler.interfaces.mcp_policy import TOOL_SCOPES
-
+from amazon_crawler.interfaces.mcp_server import create_mcp_server
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_TOOLS = {
     "crawler_doctor",
     "crawler_capabilities",
+    "crawler_health",
     "crawler_list_jobs",
     "crawler_get_job",
     "crawler_get_results",
     "crawler_get_events",
     "crawler_get_deliveries",
-    "crawler_get_audit_events",
-    "crawler_metrics",
     "crawler_create_job",
     "crawler_run_job",
     "crawler_pause_job",
@@ -95,6 +93,14 @@ class MCPInMemoryTests(unittest.IsolatedAsyncioTestCase):
             capabilities = await client.call_tool("crawler_capabilities", {})
             self.assertFalse(capabilities.is_error)
             self.assertIn("plugins", capabilities.structured_content)
+            health = await client.call_tool("crawler_health", {})
+            self.assertFalse(health.is_error)
+            self.assertEqual(health.structured_content["status"], "ready")
+            self.assertEqual(
+                set(health.structured_content),
+                {"ok", "status", "accepting_jobs"},
+            )
+            self.assertTrue(health.structured_content["accepting_jobs"])
 
     async def test_create_query_resource_and_confirmed_cancel(self) -> None:
         async with Client(self.server, raise_exceptions=True) as client:

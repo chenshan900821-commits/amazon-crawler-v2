@@ -18,7 +18,7 @@ cd amazon-crawler-v2
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .
+python -m pip install .
 ```
 
 ### 2. 准备并加载配置
@@ -251,10 +251,9 @@ amazon-crawler-mcp-client call crawler_run_job \
 
 | 工具组 | 工具 | 说明 |
 |---|---|---|
-| 预检与发现 | `crawler_doctor`、`crawler_capabilities`、`crawler_metrics` | 返回脱敏配置结论、协议能力和当前租户指标 |
+| 预检与发现 | `crawler_doctor`、`crawler_capabilities`、`crawler_health` | 返回脱敏配置、协议能力和最小业务就绪状态 |
 | 执行 | `crawler_create_job`、`crawler_run_job` | 分别用于入队和自包含运行 |
 | 查询 | `crawler_list_jobs`、`crawler_get_job`、`crawler_get_results`、`crawler_get_events`、`crawler_get_deliveries` | 按租户查询状态、证据和带游标分页的结果 |
-| 审计 | `crawler_get_audit_events` | 返回当前租户的调用者、工具、结果、耗时和参数哈希，不保存原始秘密参数 |
 | 控制 | `crawler_pause_job`、`crawler_resume_job`、`crawler_cancel_job` | 本机取消要求 `confirm=true`；生产取消要求一次性审批回执 |
 
 Server 不接受 Cookie、代理、Redis/MySQL URL、数据库路径、Bearer Token、签名密钥或任意请求头作为 Tool 参数。这些值只能由 Server/Client 进程环境或部署平台 Secret 提供。Cookie 生产、Cookie 维护和旧任务导入导出没有暴露为 MCP 工具；外部结果写入只有在服务端验证“租户、操作者、工具名、完整参数哈希、过期时间”一致的一次性审批回执后才允许。
@@ -302,22 +301,40 @@ amazon-crawler-mcp \
 amazon-crawler-mcp-client --url http://127.0.0.1:8000/mcp smoke
 ```
 
-监听非回环地址时，Server 会拒绝 `CRAWLER_MCP_AUTH_MODE=disabled`，并要求显式 Host/Origin 白名单。内网试点可以使用内置静态 Bearer 验证器：服务端只保存 Token 的 SHA-256 摘要，客户端单独持有明文 Token。
+监听非回环地址时，Server 只接受 OAuth 模式，并要求显式 Host/Origin 白名单。生产部署中，本项目是 OAuth 2.1 **Resource Server（受保护资源服务器）**：它发布 MCP 资源元数据并验证 Access Token，但不负责登录页面、用户同意、授权码、刷新令牌或发放 Token；这些职责属于独立的 OAuth/OIDC Authorization Server。
 
-服务端 Secret 示例：
+P0 已选用 Auth0 Free 作为 Authorization Server。服务端 Secret 示例：
 
 ```dotenv
 CRAWLER_MCP_PRODUCTION=true
-CRAWLER_MCP_AUTH_MODE=static
-CRAWLER_MCP_ISSUER_URL=https://auth.example.com
+CRAWLER_MCP_AUTH_MODE=oauth
+CRAWLER_MCP_OAUTH_PROVIDER=auth0
+# Auth0 Domain，只填主机名，不带 https:// 和路径
+CRAWLER_MCP_AUTH0_DOMAIN=your-tenant.us.auth0.com
 CRAWLER_MCP_RESOURCE_SERVER_URL=https://crawler.example.com/mcp
+# 必须与 Auth0 API Identifier 和 Token 的 aud 完全一致
+CRAWLER_MCP_OAUTH_AUDIENCE=https://crawler.example.com/mcp
+CRAWLER_MCP_OAUTH_ALGORITHMS=RS256
+CRAWLER_MCP_OAUTH_TENANT_MODE=subject
+CRAWLER_MCP_OAUTH_SCOPE_CLAIM=scope
+CRAWLER_MCP_OAUTH_PERMISSIONS_CLAIM=permissions
+CRAWLER_MCP_OAUTH_REQUIRE_AT_JWT=true
 CRAWLER_MCP_ALLOWED_HOSTS=crawler.example.com
 CRAWLER_MCP_ALLOWED_ORIGINS=https://console.example.com
-CRAWLER_MCP_STATIC_TOKENS_SHA256_JSON={"64位小写SHA256摘要":{"client_id":"automation-a","actor_id":"operator-a","tenant_id":"tenant-a","scopes":["crawler:read","crawler:run","crawler:control","crawler:cancel","crawler:audit"]}}
 CRAWLER_MCP_APPROVAL_SIGNING_KEY=至少32字节的随机密钥
 ```
 
-`64位小写SHA256摘要` 是对客户端实际 Bearer Token 做 SHA-256 后得到的 64 个十六进制字符，不是 Token 本身；`client_id` 是调用程序，`actor_id` 是责任人或服务身份，`tenant_id` 决定数据隔离范围，`scopes` 决定可调用工具组。生产值必须放入 Secret 管理器，不要按示例文字原样填写。
+Auth0 模式会从 Domain 自动生成带末尾斜杠的 Issuer 和公开 JWKS 地址。Auth0 API 要使用 `rfc9068_profile_authz` Token Profile，并打开 Resource Parameter Compatibility Profile、RBAC 和“把 permissions 加入 Access Token”。P0 用 Access Token 的 `sub` 隔离数据，不消耗 Organization 来表示个人租户；以后需要公司多人共享数据时，再切换到 `org_id` Claim 模式和显式 Organization 允许列表。
+
+默认严格模式要求 Token 遵循 RFC 9068：JWT Header 的 `typ=at+jwt`，使用 RS256 签名，并包含 `iss`、`aud`、`exp`、`sub`、`client_id`、`iat` 和 `jti`。Server 会从 JWKS 获取并缓存公钥，同时校验签名、签发方、受众、有效期、租户和 scope/permissions；任何一项不匹配都会在 MCP HTTP 边界返回 401。必须使用 API Access Token，不能用 ID Token；JWKS 是公开验签地址，不要把客户端密钥、Access Token 或 Refresh Token 配到服务端。
+
+配置后先检查 Auth0 的公开 Discovery 与 JWKS：
+
+```bash
+amazon-crawler-mcp-auth0-check
+```
+
+这个预检不能读取 Auth0 Dashboard 的私有开关，也不能替代一次真实登录。完整的 Dashboard 设置、角色/scope、真实 Token 联调和验收边界见 [`docs/AUTH0_P0.md`](docs/AUTH0_P0.md)。
 
 加载这些 Secret 后启动单实例服务；TLS 应由同机反向代理或可信网关终止：
 
@@ -331,7 +348,7 @@ amazon-crawler-mcp \
   --stateless-http
 ```
 
-scope 与权限一一对应：`crawler:read` 用于预检、能力、任务/结果/资源读取，`crawler:run` 用于创建或同步执行，`crawler:control` 用于暂停/恢复，`crawler:cancel` 只允许请求取消，`crawler:audit` 用于读取审计。生产 Token 应只给实际需要的最小集合；`*` 只适合本机开发身份。
+scope 与权限一一对应：`crawler:read` 用于预检、能力、任务/结果/资源读取，`crawler:run` 用于创建或同步执行，`crawler:control` 用于暂停/恢复，`crawler:cancel` 只允许请求取消。生产 Token 应只给实际需要的最小集合；`*` 只适合本机开发身份。MCP 指标和审计不属于对外 Tool，不使用业务 Access Token 读取。
 
 远程客户端只配置自己持有的明文 Token：
 
@@ -340,7 +357,32 @@ export CRAWLER_MCP_ACCESS_TOKEN='由管理员签发的实际Bearer Token'
 amazon-crawler-mcp-client --url https://crawler.example.com/mcp smoke
 ```
 
-客户端 Token 不会作为命令行参数或 MCP Tool 参数出现。内置静态验证器适合受控内网和早期试点；正式公网若需要动态登录、撤销、轮换和授权服务器发现，应在可信网关/授权服务器完成 OAuth 2.1 发放，并将当前静态验证器替换为对应 Token Verifier。MCP 授权要求见[官方授权规范](https://modelcontextprotocol.io/specification/latest/basic/authorization)。
+`CRAWLER_MCP_ACCESS_TOKEN` 可以是 MCP Host 完成 OAuth 登录后取得的短期 Access Token；这个命令行 Client 只负责使用 Token，不保存 Refresh Token，也不模拟浏览器登录。客户端 Token 不会作为命令行参数或 MCP Tool 参数出现。Server 会自动提供 `/.well-known/oauth-protected-resource/mcp`，无 Token 请求会返回带 `resource_metadata` 的 `WWW-Authenticate`，兼容 MCP Client 的 OAuth 发现流程。实现依据见 [MCP 授权规范](https://modelcontextprotocol.io/specification/latest/basic/authorization)、[RFC 9728 受保护资源元数据](https://www.rfc-editor.org/rfc/rfc9728.html)和 [RFC 9068 JWT Access Token Profile](https://www.rfc-editor.org/rfc/rfc9068.html)。
+
+### 仅供本机测试的固定 Token
+
+为了方便联调，保留了显式的 `test-token` 模式。它只能监听 `127.0.0.1`、`localhost` 或 `::1`；`CRAWLER_MCP_PRODUCTION=true` 或监听 `0.0.0.0` 时会在启动阶段直接拒绝。先执行 `openssl rand -hex 32` 生成随机值，再把同一个值写入本机 `.env` 的两个变量（不要提交）：
+
+```dotenv
+CRAWLER_MCP_PRODUCTION=false
+CRAWLER_MCP_AUTH_MODE=test-token
+CRAWLER_MCP_ISSUER_URL=http://127.0.0.1:9000
+CRAWLER_MCP_RESOURCE_SERVER_URL=http://127.0.0.1:8000/mcp
+CRAWLER_MCP_TEST_TOKEN=粘贴刚生成的随机值
+CRAWLER_MCP_TEST_CLIENT_ID=test-client
+CRAWLER_MCP_TEST_ACTOR_ID=test-operator
+CRAWLER_MCP_TEST_TENANT_ID=test-tenant
+CRAWLER_MCP_TEST_SCOPES=*
+CRAWLER_MCP_ACCESS_TOKEN=粘贴同一个随机值
+```
+
+加载 `.env` 后，在第一个终端启动上面的 loopback Streamable HTTP Server，在第二个终端执行：
+
+```bash
+amazon-crawler-mcp-client --url http://127.0.0.1:8000/mcp smoke
+```
+
+Server 读取明文测试 Token 后只在运行时配置中保留 SHA-256 摘要。需要模拟多个租户时，可改用 `CRAWLER_MCP_TEST_TOKENS_SHA256_JSON`；其格式为 `{"Token的SHA256摘要":{"client_id":"test-client","actor_id":"test-operator","tenant_id":"test-tenant","scopes":["crawler:read"]}}`。旧的 `static` 模式名和 `CRAWLER_MCP_STATIC_TOKENS_SHA256_JSON` 只作为兼容别名读取，不应继续写入新配置。
 
 非 MCP 的运维检查地址为 `/health/live` 与 `/health/ready`。它们只返回存活/就绪状态，不返回任务数和配置秘密。
 
@@ -348,13 +390,56 @@ amazon-crawler-mcp-client --url https://crawler.example.com/mcp smoke
 
 | 风险 | 已实现措施 | 主要配置 |
 |---|---|---|
+| Agent 或网关重复提交 | 调用方幂等键按租户命名；普通任务缺省时使用规范化业务输入生成稳定键，SQLite 唯一约束处理并发竞争。`product_time` 的“立即观测”缺省会新建一次观测，调用方重试时必须复用显式 Key | Tool 参数 `idempotency_key` |
 | 单个调用者打满服务 | 按“租户 + 操作者”的 Token Bucket 限流 | `CRAWLER_MCP_RATE_LIMIT_PER_MINUTE`、`CRAWLER_MCP_RATE_LIMIT_BURST` |
 | 同步长任务占满进程 | `crawler_run_job` 并发闸门和短排队超时；生产默认关闭同步运行，改用 `crawler_create_job` + Worker | `CRAWLER_MCP_MAX_CONCURRENT_RUNS`、`CRAWLER_MCP_RUN_QUEUE_TIMEOUT_SECONDS`、`CRAWLER_MCP_SYNC_RUN_ENABLED` |
+| 上游请求悬挂或无限重试 | 单次请求超时；普通任务最多 5 次、小时任务最多 11 次，也可显式限制为 1–20 次；失败按 1/2/4…秒指数退避并封顶 | `CRAWLER_REQUEST_TIMEOUT_SECONDS`、Tool 参数 `max_attempts` |
 | Amazon 连续阻断/故障 | 按目标 Host 统计连续网络、403/429、可重试 5xx；开路后停止请求，恢复窗口后只放一个探针 | `CRAWLER_UPSTREAM_CIRCUIT_FAILURE_THRESHOLD`、`CRAWLER_UPSTREAM_CIRCUIT_RECOVERY_SECONDS` |
-| 大结果挤爆 Agent 上下文 | 结果、事件、投递和审计均带 `next_cursor`；限制单页与总输出字节，超大单条只返回哈希和大小 | `CRAWLER_MCP_MAX_PAGE_SIZE`、`CRAWLER_MCP_MAX_TOOL_OUTPUT_BYTES` |
+| 大结果挤爆 Agent 上下文 | 结果、事件和投递均带 `next_cursor`；限制单页与总输出字节，超大单条只返回哈希和大小 | `CRAWLER_MCP_MAX_PAGE_SIZE`、`CRAWLER_MCP_MAX_TOOL_OUTPUT_BYTES` |
 | 越权或误操作 | scope + 租户过滤；生产取消和外部结果写入使用短期、参数绑定、一次性审批回执 | `CRAWLER_MCP_APPROVAL_SIGNING_KEY`、`CRAWLER_MCP_APPROVAL_TTL_SECONDS` |
 
 这些限制当前是单 MCP Server 进程内限制。SQLite 部署被显式限制为 `CRAWLER_MCP_INSTANCE_COUNT=1`，生产启动还会取得与数据库对应的进程文件锁；如果未来改为共享数据库并横向扩容，还必须把限流、并发额度和熔断状态放到网关或 Redis/Durable Object 等共享控制面，不能把多个进程的本地计数相加后当成全局限制。
+
+### MCP 内部指标、日志、健康检查与告警
+
+MCP 可观测数据属于内部运维控制面，不发布为 Agent Tool。对外
+`crawler_health` 只返回 `ok`、`status` 和 `accepting_jobs`；普通业务 Token
+无法读取调用量、延迟、告警、部署限制或审计事件。
+
+非 MCP 探针：
+
+- `/health/live`：只证明进程存活。
+- `/health/ready`：数据库不可用时返回 503，否则返回最小 `status`，不返回内部组件和指标。
+
+内部 MCP 指标入口默认返回 404。需要接入内部大盘时，在 Secret 管理器中生成一个高熵运维 Token，只把其小写 SHA-256 摘要配置给 Server：
+
+```dotenv
+CRAWLER_MCP_INTERNAL_OBSERVABILITY_ENABLED=true
+CRAWLER_MCP_INTERNAL_OBSERVABILITY_TOKEN_SHA256=运维Token的小写SHA256摘要
+```
+
+内部监控使用原始运维 Token 访问，不能使用普通 MCP OAuth Token：
+
+```bash
+curl -H "Authorization: Bearer ${MCP_OPS_TOKEN}" \
+  https://crawler.example.com/internal/mcp/observability
+curl -H "Authorization: Bearer ${MCP_OPS_TOKEN}" \
+  'https://crawler.example.com/internal/mcp/audit?limit=100'
+```
+
+生产网关还必须限制 `/internal/mcp/*` 的来源网络；独立 Bearer Token 是第二道边界，不应把内部路径开放给公网发现。响应设置 `Cache-Control: no-store`，审计接口使用游标分页及相同的最大输出字节限制。
+
+运行事件写到 stderr，每行一个有界 JSON 对象。MCP 日志只记录 Audit ID、Tool、状态、错误代码和延迟；租户使用哈希标识，Cookie、Token、代理、Webhook URL和调用参数不会进入日志。部署平台应采集 stderr，并按 `event` 字段检索 `mcp_request_completed` 和 `crawler_alert_state_changed`。
+
+默认 MCP 告警规则覆盖状态/审计数据库不可用、MCP 错误率、p95 延迟、限流和同步并发饱和。状态变化会去重后写结构化日志；需要直接通知内部告警系统时，将 HTTPS 接收地址放入部署 Secret：
+
+```dotenv
+CRAWLER_MCP_ALERT_WEBHOOK_URL=https://alerts.example.com/amazon-crawler
+CRAWLER_MCP_ALERT_WEBHOOK_TIMEOUT_SECONDS=3
+CRAWLER_MCP_ALERT_WEBHOOK_MAX_ATTEMPTS=3
+```
+
+完整阈值、输出结构和处理步骤见 [`docs/OPERATIONS.md`](docs/OPERATIONS.md)。Webhook 地址经常在路径或查询参数中携带凭据，必须按 Secret 管理，不能提交到 Git。
 
 ### 高风险操作审批
 
@@ -730,7 +815,7 @@ amazon-crawler-v2/
 
 - 普通 HTTP API/管理页面仍没有登录和租户隔离，只能绑定本机或置于可信管理网关之后；MCP 的认证和租户边界不自动保护普通 HTTP API。
 - 当前标准状态库是 SQLite，MCP 生产配置会拒绝声明多个实例；共享数据库、多节点 Worker 与全局额度尚未实现。
-- MCP 内置静态 Bearer 验证适合受控试点，不等于完整的动态 OAuth 授权服务器；公网多用户服务仍需要令牌签发、撤销、轮换和共享配额控制面。
+- MCP Server 已选 Auth0 作为 P0 Authorization Server，并实现 JWT/JWKS Resource Server 验证；仓库不能替你创建 Auth0 租户或证明 Dashboard 私有开关，真实公网 Token 联调仍须按 `docs/AUTH0_P0.md` 完成。
 - 真实站点访问仍需持续验证不同国家、邮编、页面形态和限流场景，离线测试不能替代线上验收。
 - Cookie 生产代码已通过隔离测试；真实新 Cookie 的成功率仍受代理可用性和 Amazon 风控影响，不能把代码完成等同于生产资源可用。
 - 商业化前需要完成目标站点条款、数据合规、访问频率和数据使用范围审查。
@@ -746,6 +831,8 @@ amazon-crawler-v2/
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：分层、状态机、断点、资源和多存储设计
 - [`docs/API.md`](docs/API.md)：HTTP API v1
+- [`docs/AUTH0_P0.md`](docs/AUTH0_P0.md)：Auth0 MCP API、scope、环境变量、预检和真实 Token 验收
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md)：幂等、并发、重试、熔断、指标、日志、健康检查和告警运行手册
 
 ## 许可证
 

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 
 from amazon_crawler.domain.errors import ConflictError
 from amazon_crawler.domain.models import ClaimedDelivery
 from amazon_crawler.domain.ports import StateStore
 from amazon_crawler.infra.result_sinks import ResultSinkRegistry
+from amazon_crawler.infra.safe_logging import emit_structured_event
 
 
 class DeliveryWorker:
@@ -45,6 +47,16 @@ class DeliveryWorker:
         )
         if delivery is None:
             return False
+        emit_structured_event(
+            "result_delivery_claimed",
+            worker_id=self.worker_id,
+            slot=slot,
+            job_id=delivery.job_id,
+            delivery_id=delivery.id,
+            sink=delivery.sink_name,
+            attempt=delivery.attempts,
+            max_attempts=delivery.max_attempts,
+        )
         heartbeat_stop = asyncio.Event()
         heartbeat_task = asyncio.create_task(
             self._heartbeat_loop(delivery, heartbeat_stop)
@@ -53,9 +65,35 @@ class DeliveryWorker:
             sink = self.sinks.get(delivery.sink_name)
             receipt = await asyncio.to_thread(sink.publish, delivery)
             await asyncio.to_thread(self.store.complete_delivery, delivery, receipt)
+            emit_structured_event(
+                "result_delivery_completed",
+                worker_id=self.worker_id,
+                job_id=delivery.job_id,
+                delivery_id=delivery.id,
+                sink=delivery.sink_name,
+                attempt=delivery.attempts,
+            )
         except ConflictError:
+            emit_structured_event(
+                "result_delivery_lease_lost",
+                level=logging.WARNING,
+                worker_id=self.worker_id,
+                job_id=delivery.job_id,
+                delivery_id=delivery.id,
+            )
             return True
         except Exception as exc:
+            emit_structured_event(
+                "result_delivery_failed",
+                level=logging.ERROR,
+                worker_id=self.worker_id,
+                job_id=delivery.job_id,
+                delivery_id=delivery.id,
+                sink=delivery.sink_name,
+                attempt=delivery.attempts,
+                max_attempts=delivery.max_attempts,
+                error_type=type(exc).__name__,
+            )
             try:
                 await asyncio.to_thread(
                     self.store.fail_delivery,
@@ -109,9 +147,21 @@ class DeliveryWorker:
 
     async def run_forever(self) -> None:
         await asyncio.to_thread(self.store.recover_expired_delivery_leases)
-        async with asyncio.TaskGroup() as group:
-            for slot in range(self.concurrency):
-                group.create_task(self._slot_loop(slot))
+        emit_structured_event(
+            "result_delivery_worker_started",
+            worker_id=self.worker_id,
+            concurrency=self.concurrency,
+            lease_seconds=self.lease_seconds,
+        )
+        try:
+            async with asyncio.TaskGroup() as group:
+                for slot in range(self.concurrency):
+                    group.create_task(self._slot_loop(slot))
+        finally:
+            emit_structured_event(
+                "result_delivery_worker_stopped",
+                worker_id=self.worker_id,
+            )
 
     def stop(self) -> None:
         self._stop.set()

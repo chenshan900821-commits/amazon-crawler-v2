@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import secrets
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import replace
@@ -32,7 +33,8 @@ from amazon_crawler.interfaces.mcp_policy import (
     MCPExecutionPolicy,
     MCPPrincipal,
     MCPRuntimeConfig,
-    StaticSHA256TokenVerifier,
+    OAuthJWTTokenVerifier,
+    TestSHA256TokenVerifier,
 )
 
 SERVER_INSTRUCTIONS = (
@@ -285,13 +287,17 @@ def create_mcp_server(
     approvals = ApprovalAuthority(runtime, app.store)
     auth = None
     verifier = None
-    if runtime.auth_mode == "static":
+    if runtime.auth_mode in {"oauth", "test-token"}:
         auth = AuthSettings(
             issuer_url=runtime.issuer_url,
             resource_server_url=runtime.resource_server_url,
-            required_scopes=[],
+            required_scopes=None,
         )
-        verifier = StaticSHA256TokenVerifier(runtime.token_records)
+        verifier = (
+            OAuthJWTTokenVerifier(runtime)
+            if runtime.auth_mode == "oauth"
+            else TestSHA256TokenVerifier(runtime.test_token_records)
+        )
     server = MCPServer(
         name="amazon-crawler",
         title="Amazon Crawler",
@@ -328,17 +334,133 @@ def create_mcp_server(
         except (CrawlerError, MCPError) as exc:
             raise ToolError(str(exc)) from exc
 
+    async def mcp_operational_report() -> dict[str, Any]:
+        try:
+            database_ready = await asyncio.to_thread(app.store.healthcheck)
+        except Exception:
+            database_ready = False
+        runtime_metrics = await policy.observability.snapshot(None)
+        alerts = await policy.observability.evaluate_alerts(
+            tenant_id=None,
+            runtime_metrics=runtime_metrics,
+            database_ready=database_ready,
+        )
+        status = (
+            "unavailable" if not database_ready else "degraded" if alerts else "ready"
+        )
+        return {
+            "schema": "amazon_crawler_mcp_observability_v1",
+            "ok": database_ready,
+            "status": status,
+            "components": {
+                "state_and_audit_store": ("ready" if database_ready else "unavailable"),
+            },
+            "runtime_metrics": runtime_metrics,
+            "alerts": alerts,
+            "limits": {
+                "rate_limit_per_minute": runtime.rate_limit_per_minute,
+                "rate_limit_burst": runtime.rate_limit_burst,
+                "max_concurrent_runs": runtime.max_concurrent_runs,
+                "run_queue_timeout_seconds": runtime.run_queue_timeout_seconds,
+                "max_page_size": runtime.max_page_size,
+                "max_tool_output_bytes": runtime.max_tool_output_bytes,
+            },
+            "server": {
+                "latest_protocol_version": LATEST_PROTOCOL_VERSION,
+                "authentication": runtime.auth_mode,
+                "production": runtime.production,
+            },
+        }
+
+    def require_internal_observability(request: Request) -> JSONResponse | None:
+        if not runtime.internal_observability_enabled:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        scheme, separator, token = request.headers.get("authorization", "").partition(
+            " "
+        )
+        candidate = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        expected = runtime.internal_observability_token_sha256 or ""
+        if (
+            not separator
+            or scheme.lower() != "bearer"
+            or not token
+            or not secrets.compare_digest(candidate, expected)
+        ):
+            return JSONResponse(
+                {"error": "unauthorized"},
+                status_code=401,
+                headers={
+                    "Cache-Control": "no-store",
+                    "WWW-Authenticate": "Bearer",
+                },
+            )
+        return None
+
     @server.custom_route("/health/live", methods=["GET"], include_in_schema=False)
     async def health_live(_: Request) -> JSONResponse:
         return JSONResponse({"status": "live"})
 
     @server.custom_route("/health/ready", methods=["GET"], include_in_schema=False)
     async def health_ready(_: Request) -> JSONResponse:
-        ready = await asyncio.to_thread(app.store.healthcheck)
+        report = await mcp_operational_report()
         return JSONResponse(
-            {"status": "ready" if ready else "not_ready"},
-            status_code=200 if ready else 503,
+            {"status": report["status"]},
+            status_code=200 if report["ok"] else 503,
         )
+
+    @server.custom_route(
+        "/internal/mcp/observability", methods=["GET"], include_in_schema=False
+    )
+    async def internal_mcp_observability(request: Request) -> JSONResponse:
+        denied = require_internal_observability(request)
+        if denied is not None:
+            return denied
+        return JSONResponse(
+            await mcp_operational_report(),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @server.custom_route(
+        "/internal/mcp/audit", methods=["GET"], include_in_schema=False
+    )
+    async def internal_mcp_audit(request: Request) -> JSONResponse:
+        denied = require_internal_observability(request)
+        if denied is not None:
+            return denied
+        try:
+            limit = min(
+                runtime.max_page_size,
+                max(1, int(request.query_params.get("limit", "100"))),
+            )
+            offset = _cursor_offset(request.query_params.get("cursor"))
+        except (TypeError, ValueError, ToolError):
+            return JSONResponse(
+                {"error": "invalid_pagination"},
+                status_code=400,
+                headers={"Cache-Control": "no-store"},
+            )
+        tenant_id = request.query_params.get("tenant_id") or None
+        if tenant_id is not None and len(tenant_id) > 200:
+            return JSONResponse(
+                {"error": "invalid_tenant"},
+                status_code=400,
+                headers={"Cache-Control": "no-store"},
+            )
+        values = await asyncio.to_thread(
+            app.store.list_mcp_audit_events,
+            tenant_id=tenant_id,
+            limit=limit + 1,
+            offset=offset,
+        )
+        payload = _bounded_page(
+            values,
+            key="audit_events",
+            offset=offset,
+            requested_limit=limit,
+            max_bytes=runtime.max_tool_output_bytes,
+        )
+        payload["scope"] = {"tenant_id": tenant_id or "all"}
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
     @server.tool(title="Check crawler configuration", annotations=ReadOnly)
     def crawler_doctor() -> dict[str, Any]:
@@ -349,6 +471,8 @@ def create_mcp_server(
             "mcp_runtime": {
                 "production": runtime.production,
                 "authentication": runtime.auth_mode,
+                "oauth_provider": runtime.oauth_provider,
+                "tenant_mode": runtime.oauth_tenant_mode,
                 "tenant_scoped": True,
                 "synchronous_run_enabled": runtime.synchronous_run_enabled,
                 "single_instance_storage": runtime.instance_count == 1,
@@ -374,18 +498,33 @@ def create_mcp_server(
                     "resources/read",
                 ],
                 "transport": ["stdio", "streamable-http"],
+                "authentication": {
+                    "mode": runtime.auth_mode,
+                    "provider": runtime.oauth_provider,
+                    "tenant_mode": runtime.oauth_tenant_mode,
+                },
                 "backend_controls": [
                     "tenant-scope",
                     "authorization-scope",
                     "rate-limit",
                     "concurrency-gate",
                     "approval-receipt",
-                    "audit",
                     "pagination",
                     "output-limit",
                     "upstream-circuit-breaker",
                 ],
             },
+        }
+
+    @server.tool(title="Check crawler operational health", annotations=ReadOnly)
+    async def crawler_health() -> dict[str, Any]:
+        """Return only the minimum business readiness needed before creating work."""
+        principal("crawler_health")
+        report = await mcp_operational_report()
+        return {
+            "ok": report["ok"],
+            "status": report["status"],
+            "accepting_jobs": report["ok"],
         }
 
     @server.tool(title="List crawl jobs", annotations=ReadOnly)
@@ -504,40 +643,6 @@ def create_mcp_server(
             key="deliveries",
             loader=app.store.list_deliveries,
         )
-
-    @server.tool(title="Get MCP audit events", annotations=ReadOnly)
-    async def crawler_get_audit_events(
-        limit: Annotated[int, Field(ge=1, le=500)] = 100,
-        cursor: Annotated[str | None, Field(max_length=12)] = None,
-    ) -> dict[str, Any]:
-        """Return tenant-scoped MCP tool audit metadata; arguments are represented by a hash."""
-        current = principal("crawler_get_audit_events")
-        offset = _cursor_offset(cursor)
-        page_limit = min(limit, runtime.max_page_size)
-        values = await asyncio.to_thread(
-            app.store.list_mcp_audit_events,
-            tenant_id=current.tenant_id,
-            limit=page_limit + 1,
-            offset=offset,
-        )
-        return _bounded_page(
-            values,
-            key="audit_events",
-            offset=offset,
-            requested_limit=page_limit,
-            max_bytes=runtime.max_tool_output_bytes,
-        )
-
-    @server.tool(title="Get crawler metrics", annotations=ReadOnly)
-    async def crawler_metrics() -> dict[str, Any]:
-        """Return tenant-scoped queue, result, and delivery counts."""
-        current = principal("crawler_metrics")
-        return {
-            "ok": True,
-            "metrics": await asyncio.to_thread(
-                app.store.metrics, tenant_id=current.tenant_id
-            ),
-        }
 
     async def create_job(
         *, action: str, arguments: dict[str, Any], approval_receipt: str | None

@@ -10,8 +10,10 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    ValidationError as PydanticValidationError,
     field_validator,
+)
+from pydantic import (
+    ValidationError as PydanticValidationError,
 )
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -141,15 +143,18 @@ def create_app(application: Application | None = None) -> Starlette:
         return FileResponse(static_root / "index.html")
 
     async def health(_: Request) -> JSONResponse:
-        cookie, cookie_routes, proxy = await asyncio.gather(
+        cookie, cookie_routes, proxy, upstream = await asyncio.gather(
             application.request_context.cookie_provider.health(),
             application.request_context.cookie_route_health(),
             application.request_context.proxy_provider.health(),
+            application.fetcher.health(),
         )
         return JSONResponse(
             {
                 "ok": True,
-                "status": "ready",
+                "status": (
+                    "degraded" if upstream["status"] == "degraded" else "ready"
+                ),
                 "version": "0.2.0",
                 "resources": {
                     "cookie": cookie.as_public_dict(),
@@ -166,6 +171,7 @@ def create_app(application: Application | None = None) -> Starlette:
                         "backend": application.fetcher.backend,
                         "tls_impersonation": application.fetcher.tls_impersonation,
                     },
+                    "upstream": upstream,
                     "result_storage": {
                         "configured_sinks": application.result_sinks.names,
                         "canonical_sink": "sqlite",
@@ -320,8 +326,29 @@ def create_app(application: Application | None = None) -> Starlette:
         return JSONResponse({"ok": True, "job": job})
 
     async def metrics(_: Request) -> JSONResponse:
+        durable, upstream = await asyncio.gather(
+            asyncio.to_thread(application.store.metrics),
+            application.fetcher.health(),
+        )
         return JSONResponse(
-            {"ok": True, "metrics": await asyncio.to_thread(application.store.metrics)}
+            {
+                "ok": True,
+                "metrics": durable,
+                "upstream": upstream,
+                "limits": {
+                    "worker_concurrency": application.settings.worker_concurrency,
+                    "request_timeout_seconds": (
+                        application.settings.request_timeout_seconds
+                    ),
+                    "max_response_bytes": application.settings.max_response_bytes,
+                    "upstream_circuit_failure_threshold": (
+                        application.settings.upstream_circuit_failure_threshold
+                    ),
+                    "upstream_circuit_recovery_seconds": (
+                        application.settings.upstream_circuit_recovery_seconds
+                    ),
+                },
+            }
         )
 
     async def exception_handler(_: Request, exc: Exception) -> JSONResponse:

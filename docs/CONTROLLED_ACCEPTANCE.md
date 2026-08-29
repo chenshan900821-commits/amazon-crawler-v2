@@ -4,7 +4,7 @@
 
 ## 1. 构建门禁
 
-1. 在干净环境执行 `python -m pip install -e .`。
+1. 在干净环境执行 `python -m pip install .`。
 2. 运行全部单元、状态机、离线回放和 Skill 校验。
 3. 启动 API 后检查 `/api/v1/health`：抓取端 `transport` 以及所有已配置的 `cookie_harvesters` 都必须是 `curl_cffi` 且 `tls_impersonation` 为 `true`；Cookie/代理只显示数量。
 4. 使用仓库扫描确认没有 Cookie、代理认证、数据库 URL 或旧配置秘密进入新目录源码。
@@ -54,7 +54,7 @@ PYTHONPATH=src:. python scripts/compile_cookie_production_evidence.py \
 旧目录已有成对保存的商品 HTML/解析结果时，先直接执行**当前旧解析器源码**与 V2 的同响应回放，避免把历史 JSON 或历史库状态误当成当前契约：
 
 ```bash
-python -m pip install -e '.[legacy-parity]'
+python -m pip install '.[legacy-parity]'
 PYTHONPATH=src:. python scripts/audit_archived_product_parity.py \
   ../debug_html \
   --legacy-source-root .. \

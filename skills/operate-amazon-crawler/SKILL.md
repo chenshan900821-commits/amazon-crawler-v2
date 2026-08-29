@@ -25,7 +25,7 @@ For queue-only creation, do not describe `created: true` as “the crawl has sta
 
 1. Select one interface: connected `crawler_*` MCP tools first, otherwise the project-local wrapper.
 2. Run `crawler_doctor` or `doctor`. Stop on any `blocking_issues` and give the user the returned configuration instructions without requesting secret values in chat.
-3. Run `crawler_capabilities` or `capabilities` before execution when the marketplace or input form is unclear.
+3. For a managed MCP deployment, run `crawler_health` before creating work. Stop when `accepting_jobs=false`; the public Tool intentionally does not expose internal MCP metrics, alerts, or audit data. Run `crawler_capabilities` or `capabilities` when the marketplace or input form is unclear.
 4. Normalize the user's explicit scope into the selected task contract. Read [references/input-contracts.md](references/input-contracts.md) for non-product tasks.
 5. Use `crawler_run_job` or `run` by default only when synchronous execution is enabled. Preserve its returned `job.id`. Keep the default `sqlite` result sink unless the user requests another sink shown by capabilities.
 6. Report `lineage_status`, every job's terminal status, item counts, result row count, bounded failure reasons, and whether secondary deliveries completed. `completed=true` with `lineage_status=failed` is a completed execution but not a successful collection.
@@ -34,7 +34,7 @@ For queue-only creation, do not describe `created: true` as “the crawl has sta
 9. Use `crawler_pause_job` or `pause` for a safe stop. In-flight work may finish before status becomes `paused`.
 10. Use `crawler_resume_job` or `resume` only for `paused` or `pause_requested` jobs.
 11. Use `crawler_cancel_job` or `cancel` only after the user explicitly confirms cancellation. Local MCP uses `confirm=true`; production MCP requires an operator-issued `approval_receipt`. The Skill must never issue or fabricate that receipt.
-12. Follow `page.next_cursor` for results, events, deliveries, or audit only as far as needed for the user's answer. Keep raw large result sets outside the conversation and report bounded counts and evidence.
+12. Follow `page.next_cursor` for results, events, or deliveries only as far as needed for the user's answer. Keep raw large result sets outside the conversation and report bounded counts and evidence.
 
 ## Commands
 
@@ -43,6 +43,7 @@ When MCP is connected, use these tools instead of Shell commands:
 ```text
 crawler_doctor
 crawler_capabilities
+crawler_health
 crawler_run_job
 crawler_create_job
 crawler_list_jobs
@@ -50,8 +51,6 @@ crawler_get_job
 crawler_get_results
 crawler_get_events
 crawler_get_deliveries
-crawler_get_audit_events
-crawler_metrics
 crawler_pause_job
 crawler_resume_job
 crawler_cancel_job

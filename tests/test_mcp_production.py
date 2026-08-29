@@ -1,25 +1,31 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import os
 import tempfile
 import unittest
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
+import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
 from mcp import Client
 from mcp.shared.exceptions import MCPError
 
 from amazon_crawler.bootstrap import build_application
 from amazon_crawler.config import Settings
+from amazon_crawler.interfaces.mcp_auth0_check import check_auth0_configuration
 from amazon_crawler.interfaces.mcp_policy import (
     ApprovalAuthority,
     MCPPrincipal,
     MCPRuntimeConfig,
+    OAuthJWTTokenVerifier,
     RunConcurrencyGate,
-    StaticSHA256TokenVerifier,
+    TestSHA256TokenVerifier,
     TokenBucketRateLimiter,
 )
 from amazon_crawler.interfaces.mcp_server import (
@@ -148,38 +154,207 @@ class MCPProductionPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(accepted.is_error)
         self.assertTrue(replayed.is_error)
 
-    async def test_static_token_verifier_exposes_identity_without_storing_plaintext(
+    async def test_test_token_verifier_exposes_identity_without_storing_plaintext(
         self,
     ) -> None:
         raw_token = "mcp-test-bearer"
-        digest = hashlib.sha256(raw_token.encode()).hexdigest()
         with patch.dict(
             os.environ,
             {
                 **environment(self.root / "auth.db"),
-                "CRAWLER_MCP_AUTH_MODE": "static",
-                "CRAWLER_MCP_ISSUER_URL": "https://auth.example.test",
-                "CRAWLER_MCP_RESOURCE_SERVER_URL": "https://crawler.example.test/mcp",
-                "CRAWLER_MCP_STATIC_TOKENS_SHA256_JSON": (
-                    '{"' + digest + '":{"client_id":"client-a","actor_id":"actor-a",'
-                    '"tenant_id":"tenant-a","scopes":["crawler:read"]}}'
-                ),
+                "CRAWLER_MCP_AUTH_MODE": "test-token",
+                "CRAWLER_MCP_ISSUER_URL": "http://127.0.0.1:9000",
+                "CRAWLER_MCP_RESOURCE_SERVER_URL": "http://127.0.0.1:8000/mcp",
+                "CRAWLER_MCP_TEST_TOKEN": raw_token,
+                "CRAWLER_MCP_TEST_CLIENT_ID": "client-a",
+                "CRAWLER_MCP_TEST_ACTOR_ID": "actor-a",
+                "CRAWLER_MCP_TEST_TENANT_ID": "tenant-a",
+                "CRAWLER_MCP_TEST_SCOPES": "crawler:read",
             },
             clear=True,
         ):
             runtime = MCPRuntimeConfig.from_env()
-        verified = await StaticSHA256TokenVerifier(runtime.token_records).verify_token(
-            raw_token
-        )
-        rejected = await StaticSHA256TokenVerifier(runtime.token_records).verify_token(
-            "wrong"
-        )
+        verifier = TestSHA256TokenVerifier(runtime.test_token_records)
+        verified = await verifier.verify_token(raw_token)
+        rejected = await verifier.verify_token("wrong")
         self.assertEqual(verified.claims["tenant_id"], "tenant-a")
         self.assertEqual(verified.scopes, ["crawler:read"])
         self.assertIsNone(rejected)
         self.assertNotIn(raw_token, repr(runtime))
 
-    async def test_job_and_audit_pages_are_bounded_and_cursor_driven(self) -> None:
+    async def test_oauth_jwt_verifier_checks_signature_issuer_audience_and_claims(
+        self,
+    ) -> None:
+        issuer = "https://auth.example.test"
+        audience = "https://crawler.example.test/mcp"
+        with patch.dict(
+            os.environ,
+            {
+                **environment(self.root / "oauth.db"),
+                "CRAWLER_MCP_AUTH_MODE": "oauth",
+                "CRAWLER_MCP_ISSUER_URL": issuer,
+                "CRAWLER_MCP_RESOURCE_SERVER_URL": audience,
+                "CRAWLER_MCP_OAUTH_JWKS_URL": f"{issuer}/.well-known/jwks.json",
+            },
+            clear=True,
+        ):
+            runtime = MCPRuntimeConfig.from_env()
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        public_key = private_key.public_key()
+
+        class LocalJWKClient:
+            def get_signing_key_from_jwt(self, token: str):
+                return SimpleNamespace(key=public_key)
+
+        verifier = OAuthJWTTokenVerifier(runtime, jwks_client=LocalJWKClient())
+        now = datetime.now(UTC)
+        claims = {
+            "iss": issuer,
+            "aud": audience,
+            "sub": "auth0|operator-a",
+            "client_id": "automation-a",
+            "tenant_id": "tenant-a",
+            "scope": "crawler:read crawler:run",
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(minutes=5)).timestamp()),
+            "jti": "test-jti",
+        }
+        valid_token = jwt.encode(
+            claims,
+            private_key,
+            algorithm="RS256",
+            headers={"kid": "test-key", "typ": "at+jwt"},
+        )
+        wrong_audience_token = jwt.encode(
+            {**claims, "aud": "https://other.example.test/mcp"},
+            private_key,
+            algorithm="RS256",
+            headers={"kid": "test-key", "typ": "at+jwt"},
+        )
+        id_token_shape = jwt.encode(
+            claims,
+            private_key,
+            algorithm="RS256",
+            headers={"kid": "test-key", "typ": "JWT"},
+        )
+
+        verified = await verifier.verify_token(valid_token)
+        self.assertEqual(verified.client_id, "automation-a")
+        self.assertEqual(verified.subject, "auth0|operator-a")
+        self.assertEqual(verified.claims["tenant_id"], "tenant-a")
+        self.assertEqual(verified.scopes, ["crawler:read", "crawler:run"])
+        self.assertIsNone(await verifier.verify_token(wrong_audience_token))
+        self.assertIsNone(await verifier.verify_token(id_token_shape))
+
+    async def test_auth0_profile_derives_urls_and_uses_subject_tenancy(self) -> None:
+        audience = "https://crawler.example.test/mcp"
+        with patch.dict(
+            os.environ,
+            {
+                **environment(self.root / "auth0.db"),
+                "CRAWLER_MCP_AUTH_MODE": "oauth",
+                "CRAWLER_MCP_OAUTH_PROVIDER": "auth0",
+                "CRAWLER_MCP_AUTH0_DOMAIN": "tenant.us.auth0.com",
+                "CRAWLER_MCP_RESOURCE_SERVER_URL": audience,
+            },
+            clear=True,
+        ):
+            runtime = MCPRuntimeConfig.from_env()
+
+        self.assertEqual(runtime.issuer_url, "https://tenant.us.auth0.com/")
+        self.assertEqual(
+            runtime.oauth_jwks_url,
+            "https://tenant.us.auth0.com/.well-known/jwks.json",
+        )
+        self.assertEqual(runtime.oauth_tenant_mode, "subject")
+        self.assertEqual(runtime.oauth_permissions_claim, "permissions")
+
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        public_key = private_key.public_key()
+
+        class LocalJWKClient:
+            def get_signing_key_from_jwt(self, token: str):
+                return SimpleNamespace(key=public_key)
+
+        now = datetime.now(UTC)
+        token = jwt.encode(
+            {
+                "iss": runtime.issuer_url,
+                "aud": audience,
+                "sub": "auth0|operator-a",
+                "client_id": "mcp-client-a",
+                "scope": "crawler:read",
+                "permissions": ["crawler:read", "crawler:run"],
+                "iat": int(now.timestamp()),
+                "exp": int((now + timedelta(minutes=5)).timestamp()),
+                "jti": "auth0-test-jti",
+            },
+            private_key,
+            algorithm="RS256",
+            headers={"kid": "auth0-test-key", "typ": "at+jwt"},
+        )
+        verified = await OAuthJWTTokenVerifier(
+            runtime, jwks_client=LocalJWKClient()
+        ).verify_token(token)
+
+        self.assertIsNotNone(verified)
+        self.assertEqual(verified.claims["tenant_id"], "auth0|operator-a")
+        self.assertEqual(verified.scopes, ["crawler:read", "crawler:run"])
+
+    async def test_auth0_public_configuration_preflight(self) -> None:
+        audience = "https://crawler.example.test/mcp"
+        issuer = "https://tenant.us.auth0.com/"
+        jwks_url = f"{issuer}.well-known/jwks.json"
+        with patch.dict(
+            os.environ,
+            {
+                **environment(self.root / "auth0-check.db"),
+                "CRAWLER_MCP_AUTH_MODE": "oauth",
+                "CRAWLER_MCP_OAUTH_PROVIDER": "auth0",
+                "CRAWLER_MCP_AUTH0_DOMAIN": "tenant.us.auth0.com",
+                "CRAWLER_MCP_RESOURCE_SERVER_URL": audience,
+            },
+            clear=True,
+        ):
+            runtime = MCPRuntimeConfig.from_env()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/.well-known/oauth-authorization-server":
+                return httpx.Response(
+                    200,
+                    json={
+                        "issuer": issuer,
+                        "jwks_uri": jwks_url,
+                        "authorization_endpoint": f"{issuer}authorize",
+                        "token_endpoint": f"{issuer}oauth/token",
+                        "code_challenge_methods_supported": ["S256"],
+                    },
+                )
+            if request.url.path == "/.well-known/jwks.json":
+                return httpx.Response(
+                    200,
+                    json={
+                        "keys": [
+                            {
+                                "kid": "auth0-test-key",
+                                "kty": "RSA",
+                                "use": "sig",
+                                "alg": "RS256",
+                            }
+                        ]
+                    },
+                )
+            return httpx.Response(404)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            result = await check_auth0_configuration(runtime, client=client)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["provider"], "auth0")
+        self.assertEqual(len(result["checks"]), 6)
+        self.assertEqual(len(result["manual_dashboard_checks"]), 5)
+
+    async def test_job_pages_are_bounded_and_audits_remain_internal(self) -> None:
         runtime = replace(
             self.local_runtime,
             local_tenant_id="tenant-page",
@@ -203,18 +378,17 @@ class MCPProductionPolicyTests(unittest.IsolatedAsyncioTestCase):
             second = await client.call_tool(
                 "crawler_list_jobs", {"limit": 2, "cursor": next_cursor}
             )
-            audits = await client.call_tool("crawler_get_audit_events", {"limit": 2})
 
         self.assertEqual(len(first.structured_content["jobs"]), 2)
         self.assertEqual(len(second.structured_content["jobs"]), 1)
         self.assertIsNotNone(next_cursor)
-        rendered = str(audits.structured_content)
-        self.assertIn("arguments_sha256", rendered)
-        self.assertNotIn("B000000000", rendered)
         persisted = self.application.store.list_mcp_audit_events(
             tenant_id="tenant-page",
             limit=20,
         )
+        rendered = str(persisted)
+        self.assertIn("arguments_sha256", rendered)
+        self.assertNotIn("B000000000", rendered)
         completed_create = next(
             event for event in persisted if event["tool_name"] == "crawler_create_job"
         )
@@ -262,7 +436,7 @@ class MCPRuntimeConfigurationTests(unittest.TestCase):
             os.environ, environment(Path("/tmp/mcp-config.db")), clear=True
         ):
             runtime = MCPRuntimeConfig.from_env()
-        with self.assertRaisesRegex(ValueError, "requires authentication"):
+        with self.assertRaisesRegex(ValueError, "requires OAuth authentication"):
             runtime.validate_http("0.0.0.0")
 
     def test_sqlite_production_refuses_false_multi_instance_configuration(self) -> None:
@@ -274,6 +448,100 @@ class MCPRuntimeConfigurationTests(unittest.TestCase):
         with patch.dict(os.environ, configured, clear=True):
             with self.assertRaisesRegex(ValueError, "single-instance"):
                 MCPRuntimeConfig.from_env()
+
+    def test_test_token_mode_is_loopback_only_and_forbidden_in_production(self) -> None:
+        configured = {
+            **environment(Path("/tmp/mcp-test-token.db")),
+            "CRAWLER_MCP_AUTH_MODE": "test-token",
+            "CRAWLER_MCP_ISSUER_URL": "http://127.0.0.1:9000",
+            "CRAWLER_MCP_RESOURCE_SERVER_URL": "http://127.0.0.1:8000/mcp",
+            "CRAWLER_MCP_TEST_TOKEN": "local-test-token",
+        }
+        with patch.dict(os.environ, configured, clear=True):
+            runtime = MCPRuntimeConfig.from_env()
+        runtime.validate_http("127.0.0.1")
+        with self.assertRaisesRegex(ValueError, "requires OAuth"):
+            runtime.validate_http("0.0.0.0")
+        with (
+            patch.dict(
+                os.environ,
+                {**configured, "CRAWLER_MCP_PRODUCTION": "true"},
+                clear=True,
+            ),
+            self.assertRaisesRegex(ValueError, "forbidden in production"),
+        ):
+            MCPRuntimeConfig.from_env()
+
+    def test_auth0_profile_refuses_non_rfc9068_configuration(self) -> None:
+        configured = {
+            **environment(Path("/tmp/mcp-auth0-config.db")),
+            "CRAWLER_MCP_AUTH_MODE": "oauth",
+            "CRAWLER_MCP_OAUTH_PROVIDER": "auth0",
+            "CRAWLER_MCP_AUTH0_DOMAIN": "tenant.us.auth0.com",
+            "CRAWLER_MCP_RESOURCE_SERVER_URL": "https://crawler.example.test/mcp",
+            "CRAWLER_MCP_OAUTH_REQUIRE_AT_JWT": "false",
+        }
+        with (
+            patch.dict(os.environ, configured, clear=True),
+            self.assertRaisesRegex(ValueError, "Auth0 P0 profile"),
+        ):
+            MCPRuntimeConfig.from_env()
+
+    def test_alert_webhook_is_secret_and_requires_safe_transport(self) -> None:
+        unsafe = {
+            **environment(Path("/tmp/mcp-alert-config.db")),
+            "CRAWLER_MCP_ALERT_WEBHOOK_URL": "http://alerts.example.test/hook",
+        }
+        with (
+            patch.dict(os.environ, unsafe, clear=True),
+            self.assertRaisesRegex(ValueError, "ALERT_WEBHOOK_URL"),
+        ):
+            MCPRuntimeConfig.from_env()
+
+        local_url = "http://127.0.0.1:9999/hook?key=ALERT_TEST_SECRET"
+        with patch.dict(
+            os.environ,
+            {**unsafe, "CRAWLER_MCP_ALERT_WEBHOOK_URL": local_url},
+            clear=True,
+        ):
+            runtime = MCPRuntimeConfig.from_env()
+        self.assertEqual(runtime.alert_webhook_url, local_url)
+        self.assertNotIn("ALERT_TEST_SECRET", repr(runtime))
+
+    def test_internal_observability_is_disabled_by_default_and_requires_digest(
+        self,
+    ) -> None:
+        base = environment(Path("/tmp/mcp-internal-observability.db"))
+        with patch.dict(os.environ, base, clear=True):
+            runtime = MCPRuntimeConfig.from_env()
+        self.assertFalse(runtime.internal_observability_enabled)
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    **base,
+                    "CRAWLER_MCP_INTERNAL_OBSERVABILITY_ENABLED": "true",
+                },
+                clear=True,
+            ),
+            self.assertRaisesRegex(ValueError, "TOKEN_SHA256"),
+        ):
+            MCPRuntimeConfig.from_env()
+
+        digest = "a" * 64
+        with patch.dict(
+            os.environ,
+            {
+                **base,
+                "CRAWLER_MCP_INTERNAL_OBSERVABILITY_ENABLED": "true",
+                "CRAWLER_MCP_INTERNAL_OBSERVABILITY_TOKEN_SHA256": digest,
+            },
+            clear=True,
+        ):
+            runtime = MCPRuntimeConfig.from_env()
+        self.assertTrue(runtime.internal_observability_enabled)
+        self.assertNotIn(digest, repr(runtime))
 
 
 if __name__ == "__main__":

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 
 from amazon_crawler.domain.errors import ConflictError
 from amazon_crawler.domain.ports import StateStore
+from amazon_crawler.infra.safe_logging import emit_structured_event
 from amazon_crawler.plugins.registry import PluginRegistry
 
 
@@ -28,8 +30,7 @@ def _public_failure_details(details: dict[str, object]) -> dict[str, object]:
         public_evidence = {
             key: evidence[key]
             for key in ("sha256", "bytes", "captured", "artifact_ref")
-            if key in evidence
-            and isinstance(evidence[key], (str, int, bool))
+            if key in evidence and isinstance(evidence[key], (str, int, bool))
         }
         if public_evidence:
             allowed["evidence"] = public_evidence
@@ -70,12 +71,30 @@ class Worker:
         )
         if not item:
             return False
+        emit_structured_event(
+            "crawl_item_claimed",
+            worker_id=self.worker_id,
+            slot=slot,
+            job_id=item.job_id,
+            item_id=item.id,
+            kind=item.kind,
+            attempt=item.attempts,
+            max_attempts=item.max_attempts,
+        )
         heartbeat_stop = asyncio.Event()
         heartbeat_task = asyncio.create_task(self._heartbeat_loop(item, heartbeat_stop))
         try:
             outcome = await self.plugins.get(item.kind).execute(item)
             if outcome.ok and outcome.result:
                 await asyncio.to_thread(self.store.complete_item, item, outcome.result)
+                emit_structured_event(
+                    "crawl_item_completed",
+                    worker_id=self.worker_id,
+                    job_id=item.job_id,
+                    item_id=item.id,
+                    kind=item.kind,
+                    attempt=item.attempts,
+                )
             elif outcome.failure:
                 await asyncio.to_thread(
                     self.store.fail_item,
@@ -84,6 +103,18 @@ class Worker:
                     message=outcome.failure.message,
                     retryable=outcome.failure.retryable,
                     details=_public_failure_details(outcome.failure.details),
+                )
+                emit_structured_event(
+                    "crawl_item_failed",
+                    level=logging.WARNING,
+                    worker_id=self.worker_id,
+                    job_id=item.job_id,
+                    item_id=item.id,
+                    kind=item.kind,
+                    attempt=item.attempts,
+                    max_attempts=item.max_attempts,
+                    error_code=outcome.failure.code,
+                    retryable=outcome.failure.retryable,
                 )
             else:
                 await asyncio.to_thread(
@@ -96,8 +127,23 @@ class Worker:
                 )
         except ConflictError:
             # A recovered lease belongs to another worker. Its result must not be committed.
+            emit_structured_event(
+                "crawl_item_lease_lost",
+                level=logging.WARNING,
+                worker_id=self.worker_id,
+                job_id=item.job_id,
+                item_id=item.id,
+            )
             return True
         except Exception as exc:
+            emit_structured_event(
+                "crawl_item_internal_error",
+                level=logging.ERROR,
+                worker_id=self.worker_id,
+                job_id=item.job_id,
+                item_id=item.id,
+                error_type=type(exc).__name__,
+            )
             try:
                 await asyncio.to_thread(
                     self.store.fail_item,
@@ -150,9 +196,21 @@ class Worker:
 
     async def run_forever(self) -> None:
         await asyncio.to_thread(self.store.recover_expired_leases)
-        async with asyncio.TaskGroup() as group:
-            for slot in range(self.concurrency):
-                group.create_task(self._slot_loop(slot))
+        emit_structured_event(
+            "crawl_worker_started",
+            worker_id=self.worker_id,
+            concurrency=self.concurrency,
+            lease_seconds=self.lease_seconds,
+        )
+        try:
+            async with asyncio.TaskGroup() as group:
+                for slot in range(self.concurrency):
+                    group.create_task(self._slot_loop(slot))
+        finally:
+            emit_structured_event(
+                "crawl_worker_stopped",
+                worker_id=self.worker_id,
+            )
 
     def stop(self) -> None:
         self._stop.set()

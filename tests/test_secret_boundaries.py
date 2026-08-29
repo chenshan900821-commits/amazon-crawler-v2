@@ -7,7 +7,6 @@ from pathlib import Path
 from amazon_crawler.domain.errors import ValidationError
 from amazon_crawler.interfaces.cli import _public_error
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -33,8 +32,7 @@ class SecretBoundaryTests(unittest.TestCase):
             for root in roots
             for path in root.rglob("*")
             if path.is_file()
-            and path.suffix
-            in {".py", ".js", ".html", ".css", ".md", ".yaml", ".json"}
+            and path.suffix in {".py", ".js", ".html", ".css", ".md", ".yaml", ".json"}
         ]
         files.extend(
             path
@@ -72,9 +70,9 @@ class SecretBoundaryTests(unittest.TestCase):
 
     def test_example_environment_keeps_all_secret_values_empty(self) -> None:
         values = {}
-        for line in (PROJECT_ROOT / ".env.example").read_text(
-            encoding="utf-8"
-        ).splitlines():
+        for line in (
+            (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
+        ):
             if line and not line.startswith("#") and "=" in line:
                 key, value = line.split("=", 1)
                 values[key] = value
@@ -87,6 +85,8 @@ class SecretBoundaryTests(unittest.TestCase):
             "CRAWLER_PROXY_EXTRACT_URL",
             "CRAWLER_PROXY_USERNAME",
             "CRAWLER_PROXY_PASSWORD",
+            "CRAWLER_MCP_ALERT_WEBHOOK_URL",
+            "CRAWLER_MCP_INTERNAL_OBSERVABILITY_TOKEN_SHA256",
         }
         internal_secret_keys = {
             "CRAWLER_COOKIE_REDIS_JP_URL",

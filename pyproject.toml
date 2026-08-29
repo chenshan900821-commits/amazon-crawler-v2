@@ -10,6 +10,7 @@ dependencies = [
   "httpx2>=2.12,<3",
   "lxml>=5,<7",
   "mcp>=2.1,<2.2",
+  "PyJWT[crypto]>=2.13,<3",
   "pydantic>=2.10,<3",
   "redis>=5,<7",
   "sqlalchemy>=2,<3",
@@ -30,6 +31,7 @@ amazon-crawler = "amazon_crawler.interfaces.cli:main"
 amazon-crawler-mcp = "amazon_crawler.interfaces.mcp_server:main"
 amazon-crawler-mcp-client = "amazon_crawler.interfaces.mcp_client:main"
 amazon-crawler-mcp-approval = "amazon_crawler.interfaces.mcp_approval:main"
+amazon-crawler-mcp-auth0-check = "amazon_crawler.interfaces.mcp_auth0_check:main"
 
 [build-system]
 requires = ["hatchling"]

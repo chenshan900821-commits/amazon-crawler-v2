@@ -5,7 +5,12 @@ import unittest
 
 from amazon_crawler.domain.models import CrawlFailure
 from amazon_crawler.domain.resources import FingerprintProfile, ResourceOutcome
-from amazon_crawler.infra.http import FetchResponse, HttpFetcher, ResponseObservation
+from amazon_crawler.infra.http import (
+    FetchResponse,
+    HostCircuitBreaker,
+    HttpFetcher,
+    ResponseObservation,
+)
 from amazon_crawler.infra.resources import (
     BrowserFingerprintProvider,
     RequestContextFactory,
@@ -87,6 +92,23 @@ class HttpTransportTests(unittest.IsolatedAsyncioTestCase):
             transport_backend="curl_cffi",
             curl_session_factory=FakeCurlSession,
         )
+
+    async def test_circuit_health_reports_open_and_recovered_state(self) -> None:
+        circuit = HostCircuitBreaker(failure_threshold=2, recovery_seconds=60)
+        url = "https://www.amazon.com/dp/B000000001"
+        await circuit.failure(url)
+        await circuit.failure(url)
+
+        opened = await circuit.snapshot()
+        self.assertEqual(opened["status"], "degraded")
+        self.assertEqual(opened["open_circuit_count"], 1)
+        self.assertEqual(opened["circuits"][0]["status"], "open")
+        self.assertNotIn("B000000001", str(opened))
+
+        await circuit.success(url)
+        recovered = await circuit.snapshot()
+        self.assertEqual(recovered["status"], "ready")
+        self.assertEqual(recovered["open_circuit_count"], 0)
 
     async def test_curl_transport_uses_real_impersonation_profile(self) -> None:
         FakeResponse.response_status = 200

@@ -8,7 +8,7 @@ This P0 API is for local development. It must sit behind authentication, tenant 
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/health` | readiness, redacted resource counts, and active HTTP/TLS transport |
+| GET | `/health` | readiness, redacted resource counts, active HTTP/TLS transport, and upstream circuit state |
 | GET | `/capabilities` | plugins, marketplaces, modes and controls |
 | GET | `/cookie-pools` | redacted Cookie acquisition feature and pool state |
 | POST | `/cookie-pools/fill` | explicitly acquire validated cookies for one configured pool |
@@ -21,7 +21,7 @@ This P0 API is for local development. It must sit behind authentication, tenant 
 | POST | `/jobs/{id}/pause` | safe pause request |
 | POST | `/jobs/{id}/resume` | resume retained work |
 | POST | `/jobs/{id}/cancel` | cancel remaining work |
-| GET | `/metrics` | parser quality and failure distribution |
+| GET | `/metrics` | job/item states, attempts/retries, parser quality, failure distribution, delivery state, upstream circuit and configured limits |
 
 Product create example:
 

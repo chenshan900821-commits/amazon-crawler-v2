@@ -4,8 +4,9 @@ import asyncio
 import hashlib
 import importlib.util
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -18,7 +19,6 @@ from amazon_crawler.infra.resources import (
     StaticCookieProvider,
     StaticProxyProvider,
 )
-
 
 # The current legacy validators do not treat every HTTP 404/410 as a business
 # terminal.  They first look for one of these page/address markers in the body;
@@ -143,6 +143,44 @@ class HostCircuitBreaker:
             if state.failures >= self._threshold:
                 state.opened_at = time.monotonic()
 
+    async def snapshot(self) -> dict[str, Any]:
+        now = time.monotonic()
+        async with self._lock:
+            circuits = []
+            for host, state in sorted(self._states.items()):
+                retry_after = (
+                    max(0.0, self._recovery_seconds - (now - state.opened_at))
+                    if state.opened_at is not None
+                    else None
+                )
+                status = (
+                    "half_open"
+                    if state.probe_in_flight
+                    else "open"
+                    if state.opened_at is not None
+                    else "closed"
+                )
+                circuits.append(
+                    {
+                        "host": host,
+                        "status": status,
+                        "consecutive_failures": state.failures,
+                        "retry_after_seconds": (
+                            round(retry_after, 3) if retry_after is not None else None
+                        ),
+                    }
+                )
+        open_count = sum(
+            1 for circuit in circuits if circuit["status"] in {"open", "half_open"}
+        )
+        return {
+            "status": "degraded" if open_count else "ready",
+            "open_circuit_count": open_count,
+            "circuits": circuits,
+            "failure_threshold": self._threshold,
+            "recovery_seconds": self._recovery_seconds,
+        }
+
 
 class HttpFetcher:
     supports_response_observer = True
@@ -204,6 +242,15 @@ class HttpFetcher:
     @property
     def tls_impersonation(self) -> bool:
         return self._transport_backend == "curl_cffi"
+
+    async def health(self) -> dict[str, Any]:
+        circuit = await self._circuit.snapshot()
+        return {
+            "status": circuit["status"],
+            "transport_backend": self.backend,
+            "tls_impersonation": self.tls_impersonation,
+            **circuit,
+        }
 
     @staticmethod
     def _purpose_headers(purpose: str, method: str) -> dict[str, str]:

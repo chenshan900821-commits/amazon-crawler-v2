@@ -5,10 +5,11 @@ import json
 import sqlite3
 import threading
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from amazon_crawler.domain.errors import ConflictError, NotFoundError
 from amazon_crawler.domain.models import (
@@ -1364,6 +1365,28 @@ class SQLiteStore:
                     params,
                 ).fetchall()
             }
+            item_statuses = {
+                row["status"]: int(row["count"])
+                for row in connection.execute(
+                    f"""
+                    SELECT job_items.status, COUNT(*) AS count
+                    FROM job_items JOIN jobs ON jobs.id = job_items.job_id
+                    {"WHERE jobs.tenant_id = ?" if tenant_id is not None else ""}
+                    GROUP BY job_items.status
+                    """,
+                    params,
+                ).fetchall()
+            }
+            attempt_row = connection.execute(
+                f"""
+                SELECT COALESCE(SUM(job_items.attempts), 0) AS attempts_total,
+                       COALESCE(SUM(CASE WHEN job_items.attempts > 1 THEN 1 ELSE 0 END), 0)
+                           AS retried_items
+                FROM job_items JOIN jobs ON jobs.id = job_items.job_id
+                {"WHERE jobs.tenant_id = ?" if tenant_id is not None else ""}
+                """,
+                params,
+            ).fetchone()
             failures = [
                 {"code": row["last_error_code"], "count": int(row["count"])}
                 for row in connection.execute(
@@ -1378,11 +1401,21 @@ class SQLiteStore:
                     params,
                 ).fetchall()
             ]
+            result_count_row = connection.execute(
+                f"""
+                SELECT COUNT(*) AS count FROM results
+                JOIN jobs ON jobs.id = results.job_id
+                {"WHERE jobs.tenant_id = ?" if tenant_id is not None else ""}
+                """,
+                params,
+            ).fetchone()
             result_rows = connection.execute(
                 f"""
                 SELECT results.data_json FROM results
                 JOIN jobs ON jobs.id = results.job_id
                 {"WHERE jobs.tenant_id = ?" if tenant_id is not None else ""}
+                ORDER BY results.collected_at DESC
+                LIMIT 10000
                 """,
                 params,
             ).fetchall()
@@ -1409,12 +1442,49 @@ class SQLiteStore:
             parser_versions[version] = parser_versions.get(version, 0) + 1
         return {
             "jobs_by_status": jobs,
+            "job_items_by_status": item_statuses,
+            "crawl_attempts_total": int(attempt_row["attempts_total"]),
+            "retried_items": int(attempt_row["retried_items"]),
             "failure_reasons": failures,
-            "results": len(result_rows),
+            "results": int(result_count_row["count"]),
+            "quality_sample_size": len(result_rows),
+            "quality_sample_limit": 10_000,
             "average_core_field_coverage": round(sum(coverages) / len(coverages), 4)
             if coverages
             else None,
             "parser_versions": parser_versions,
+            "deliveries_by_status": deliveries,
+        }
+
+    def operational_counts(self, *, tenant_id: str | None = None) -> dict[str, Any]:
+        """Return lightweight queue counts suitable for frequent health probes."""
+        params: tuple[Any, ...] = (tenant_id,) if tenant_id is not None else ()
+        with self._connect() as connection:
+            jobs = {
+                row["status"]: int(row["count"])
+                for row in connection.execute(
+                    f"""
+                    SELECT status, COUNT(*) AS count FROM jobs
+                    {"WHERE tenant_id = ?" if tenant_id is not None else ""}
+                    GROUP BY status
+                    """,
+                    params,
+                ).fetchall()
+            }
+            deliveries = {
+                row["status"]: int(row["count"])
+                for row in connection.execute(
+                    f"""
+                    SELECT result_outbox.status, COUNT(*) AS count
+                    FROM result_outbox JOIN jobs ON jobs.id = result_outbox.job_id
+                    {"WHERE jobs.tenant_id = ?" if tenant_id is not None else ""}
+                    GROUP BY result_outbox.status
+                    """,
+                    params,
+                ).fetchall()
+            }
+        return {
+            "jobs_by_status": jobs,
             "deliveries_by_status": deliveries,
         }
 
@@ -1475,25 +1545,29 @@ class SQLiteStore:
     def list_mcp_audit_events(
         self,
         *,
-        tenant_id: str,
+        tenant_id: str | None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
+        where = "WHERE tenant_id = ?" if tenant_id is not None else ""
+        params: list[Any] = [tenant_id] if tenant_id is not None else []
+        params.extend(
+            [
+                max(1, min(int(limit), 500)),
+                max(0, int(offset)),
+            ]
+        )
         with self._connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT id, tenant_id, actor_id, client_id, tool_name,
                        arguments_sha256, request_id, status, error_code,
                        latency_ms, created_at, finished_at
                 FROM mcp_audit_events
-                WHERE tenant_id = ?
+                {where}
                 ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?
                 """,
-                (
-                    tenant_id,
-                    max(1, min(int(limit), 500)),
-                    max(0, int(offset)),
-                ),
+                params,
             ).fetchall()
         return [dict(row) for row in rows]
 
