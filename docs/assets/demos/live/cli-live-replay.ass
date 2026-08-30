@@ -1,0 +1,27 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Header,Hiragino Sans GB,18,&H0093A4A8,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,2,0,1,0,0,7,62,62,35,1
+Style: Title,Hiragino Sans GB,42,&H00F4FCFD,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,0,0,7,70,70,74,1
+Style: Accent,Hiragino Sans GB,21,&H0058FFD2,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,0,0,7,72,72,134,1
+Style: Mono,Hiragino Sans GB,22,&H00D8E3E5,&H000000FF,&H00000000,&HAA132124,0,0,0,0,100,100,0,0,3,0,0,7,76,76,192,1
+Style: Success,Hiragino Sans GB,26,&H0058FFD2,&H000000FF,&H00000000,&HAA132124,1,0,0,0,100,100,0,0,3,0,0,7,76,76,192,1
+Style: Foot,Hiragino Sans GB,17,&H008FA4A7,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,1,50,50,28,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:24.00,Header,,0,0,0,,CLI SELF-CONTAINED RUN · RAW TERMINAL REPLAY · 2026-08-30
+Dialogue: 0,0:00:00.00,0:00:04.00,Title,,0,0,0,,不用页面，不用常驻 Worker
+Dialogue: 0,0:00:00.00,0:00:04.00,Accent,,0,0,0,,原始来源：cli-20260830.typescript
+Dialogue: 0,0:00:04.00,0:00:10.00,Title,,0,0,0,,01 / 复制 README 命令执行
+Dialogue: 0,0:00:04.00,0:00:10.00,Mono,,0,0,0,,$ amazon-crawler run B07FZ8S74R\N  --kind product_time --marketplace US\N  --postal-code 10001 --max-attempts 3\N  --timeout-seconds 240
+Dialogue: 0,0:00:10.00,0:00:17.50,Title,,0,0,0,,02 / 临时 Worker 跑到完整终态
+Dialogue: 0,0:00:10.00,0:00:17.50,Success,,0,0,0,,✓ job_d8e5065844da48c9bc64a06fda0ca387\N✓ lineage_status: succeeded · attempts: 1 · results: 1\N✓ Echo Dot · Amazon · Rating 4.7 / 5\N✓ HTTP 200 · 1,563,014 bytes\N✓ runner.stopped_reason: terminal
+Dialogue: 0,0:00:17.50,0:00:24.00,Title,,0,0,0,,03 / SQLite 标准结果与证据
+Dialogue: 0,0:00:17.50,0:00:24.00,Mono,,0,0,0,,schema: amazon.product-observation.v1 / amazon.product.v2\NSHA-256\N67c2a360316e14f26713bc11aaaf28fb\N4d708be8ae57150e31d2f4e11cf75099
+Dialogue: 0,0:00:00.00,0:00:24.00,Foot,,0,0,0,,由原始 CLI stdout/stderr 生成的压缩时间回放 · 命令、完整结果与 JSON 收据都可下载核对

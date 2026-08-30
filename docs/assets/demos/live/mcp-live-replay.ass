@@ -1,0 +1,27 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Header,Hiragino Sans GB,18,&H0093A4A8,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,2,0,1,0,0,7,62,62,35,1
+Style: Title,Hiragino Sans GB,42,&H00F4FCFD,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,0,0,7,70,70,74,1
+Style: Accent,Hiragino Sans GB,21,&H0058FFD2,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,0,0,7,72,72,134,1
+Style: Mono,Hiragino Sans GB,22,&H00D8E3E5,&H000000FF,&H00000000,&HAA132124,0,0,0,0,100,100,0,0,3,0,0,7,76,76,192,1
+Style: Success,Hiragino Sans GB,26,&H0058FFD2,&H000000FF,&H00000000,&HAA132124,1,0,0,0,100,100,0,0,3,0,0,7,76,76,192,1
+Style: Foot,Hiragino Sans GB,17,&H008FA4A7,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,1,50,50,28,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:24.00,Header,,0,0,0,,MCP STDIO SERVER + CLIENT · RAW TERMINAL REPLAY · 2026-08-30
+Dialogue: 0,0:00:00.00,0:00:04.00,Title,,0,0,0,,MCP Client 自动启动 Server
+Dialogue: 0,0:00:00.00,0:00:04.00,Accent,,0,0,0,,原始来源：mcp-20260830.typescript
+Dialogue: 0,0:00:04.00,0:00:10.00,Title,,0,0,0,,01 / 调用 crawler_run_job
+Dialogue: 0,0:00:04.00,0:00:10.00,Mono,,0,0,0,,inputs: [B07FZ8S74R]\Nkind: product · marketplace_id: US · postal_code: 10001\Nmax_attempts: 3 · timeout_seconds: 240\N协议版本：2026-07-28
+Dialogue: 0,0:00:10.00,0:00:17.50,Title,,0,0,0,,02 / Tool 与业务终态都成功
+Dialogue: 0,0:00:10.00,0:00:17.50,Success,,0,0,0,,✓ result.is_error: false\N✓ job_370230bb081c45ec9602bda4bee01f64\N✓ lineage_status: succeeded · attempts: 1 · results: 1\N✓ Echo Dot · Amazon · Rating 4.7 / 5\N✓ HTTP 200 · 1,571,807 bytes
+Dialogue: 0,0:00:17.50,0:00:24.00,Title,,0,0,0,,03 / 独立响应证据
+Dialogue: 0,0:00:17.50,0:00:24.00,Mono,,0,0,0,,schema: amazon.product.v2\NSHA-256\N0ee1ec9c9492f1aca59bfb0383809901\Nb568b7ab788026ecb6d8725c58ac5191
+Dialogue: 0,0:00:00.00,0:00:24.00,Foot,,0,0,0,,由原始 MCP Client 终端记录生成的压缩时间回放 · 原始 stdout/stderr 与 JSON 收据已提交

@@ -1,0 +1,29 @@
+{
+  "captured_at": "2026-08-30",
+  "interface": "mcp_stdio_client",
+  "protocol_version": "2026-07-28",
+  "tool": "crawler_run_job",
+  "tool_is_error": false,
+  "secrets_disclosed": false,
+  "job": {
+    "id": "job_370230bb081c45ec9602bda4bee01f64",
+    "status": "succeeded",
+    "lineage_status": "succeeded",
+    "attempts": 1,
+    "result_count": 1
+  },
+  "result": {
+    "asin": "B07FZ8S74R",
+    "title": "Echo Dot (3rd Gen, 2018 release) - Smart speaker with Alexa - Charcoal",
+    "brand": "Amazon",
+    "rating": "4.7 out of 5 stars",
+    "rating_count": "(1,038,115)",
+    "data_schema": "amazon.product.v2"
+  },
+  "evidence": {
+    "http_status": 200,
+    "bytes": 1571807,
+    "sha256": "0ee1ec9c9492f1aca59bfb0383809901b568b7ab788026ecb6d8725c58ac5191",
+    "raw_terminal_record": "mcp-20260830.typescript"
+  }
+}

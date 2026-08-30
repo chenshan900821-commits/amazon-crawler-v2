@@ -1,0 +1,11 @@
+# Project-local Codex configuration. Codex loads it only after the user trusts
+# this repository. The launcher reads only CRAWLER_* values from the local .env;
+# no secret value is stored in this file or passed in an Agent prompt.
+
+[mcp_servers.amazon-crawler]
+command = ".venv/bin/python"
+args = ["scripts/start_mcp_stdio.py"]
+cwd = "."
+startup_timeout_sec = 20
+tool_timeout_sec = 600
+enabled = true

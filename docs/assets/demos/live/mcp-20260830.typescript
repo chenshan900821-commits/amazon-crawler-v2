@@ -1,0 +1,309 @@
+^D{"attempt":1,"event":"crawl_item_claimed","item_id":"item_4b9ae424b9064fb383df344568857b97","job_id":"job_370230bb081c45ec9602bda4bee01f64","kind":"product","max_attempts":3,"slot":0,"timestamp":"2026-08-30T00:29:19.008949+00:00","worker_id":"worker_adea63c02fdc"}
+{"attempt":1,"event":"crawl_item_completed","item_id":"item_4b9ae424b9064fb383df344568857b97","job_id":"job_370230bb081c45ec9602bda4bee01f64","kind":"product","timestamp":"2026-08-30T00:29:24.097394+00:00","worker_id":"worker_adea63c02fdc"}
+{"audit_id":"audit_a55da0fbebb6460d97bc6c8e85ad58db","error_code":null,"event":"mcp_request_completed","latency_ms":5146,"principal_hash":"25bf8e1a2393f110","request_id":"2","status":"succeeded","timestamp":"2026-08-30T00:29:24.128951+00:00","tool_name":"crawler_run_job"}
+{
+  "instructions": "Call crawler_doctor before creating work. In production, prefer crawler_create_job and poll crawler_get_job; crawler_run_job may be disabled. Never pass Cookie, proxy, database, bearer-token, or signing-key secrets as tool arguments. created=true proves persistence only, not crawl completion. External result writes and production cancellation require an operator-issued approval receipt bound to the exact action.",
+  "ok": true,
+  "protocol_version": "2026-07-28",
+  "result": {
+    "is_error": false,
+    "structured_content": {
+      "completed": true,
+      "created": true,
+      "deliveries": [],
+      "job": {
+        "cancelled_items": 0,
+        "checkpoint": {
+          "contiguous_terminal_seq": 1,
+          "counts": {
+            "succeeded": 1
+          },
+          "version": 1
+        },
+        "checkpoint_seq": 1,
+        "created_at": "2026-08-30T00:29:18.984558+00:00",
+        "created_by": "local-operator",
+        "execution_mode": "standard",
+        "failed_items": 0,
+        "finished_at": "2026-08-30T00:29:24.093081+00:00",
+        "id": "job_370230bb081c45ec9602bda4bee01f64",
+        "idempotency_key": "readme-live-mcp-20260830-v1",
+        "items": [
+          {
+            "attempts": 1,
+            "available_at": "2026-08-30T00:29:18.984558+00:00",
+            "finished_at": "2026-08-30T00:29:24.089290+00:00",
+            "id": "item_4b9ae424b9064fb383df344568857b97",
+            "input": {
+              "asin": "B07FZ8S74R",
+              "marketplace_id": "US",
+              "postal_code": "10001",
+              "product_url": "https://www.amazon.com/dp/B07FZ8S74R",
+              "source": "B07FZ8S74R"
+            },
+            "input_key": "US:B07FZ8S74R:10001",
+            "last_error": null,
+            "last_error_code": null,
+            "max_attempts": 3,
+            "seq": 1,
+            "started_at": "2026-08-30T00:29:19.006509+00:00",
+            "status": "succeeded"
+          }
+        ],
+        "kind": "product",
+        "last_error": null,
+        "last_error_code": null,
+        "options": {
+          "result_sinks": [
+            "sqlite"
+          ]
+        },
+        "priority": 0,
+        "progress": {
+          "percent": 100.0,
+          "terminal_items": 1,
+          "total_items": 1
+        },
+        "started_at": "2026-08-30T00:29:19.006509+00:00",
+        "status": "succeeded",
+        "succeeded_items": 1,
+        "tenant_id": "local",
+        "total_items": 1,
+        "updated_at": "2026-08-30T00:29:24.093064+00:00"
+      },
+      "jobs": [
+        {
+          "cancelled_items": 0,
+          "checkpoint": {
+            "contiguous_terminal_seq": 1,
+            "counts": {
+              "succeeded": 1
+            },
+            "version": 1
+          },
+          "checkpoint_seq": 1,
+          "created_at": "2026-08-30T00:29:18.984558+00:00",
+          "created_by": "local-operator",
+          "execution_mode": "standard",
+          "failed_items": 0,
+          "finished_at": "2026-08-30T00:29:24.093081+00:00",
+          "id": "job_370230bb081c45ec9602bda4bee01f64",
+          "idempotency_key": "readme-live-mcp-20260830-v1",
+          "items": [
+            {
+              "attempts": 1,
+              "available_at": "2026-08-30T00:29:18.984558+00:00",
+              "finished_at": "2026-08-30T00:29:24.089290+00:00",
+              "id": "item_4b9ae424b9064fb383df344568857b97",
+              "input": {
+                "asin": "B07FZ8S74R",
+                "marketplace_id": "US",
+                "postal_code": "10001",
+                "product_url": "https://www.amazon.com/dp/B07FZ8S74R",
+                "source": "B07FZ8S74R"
+              },
+              "input_key": "US:B07FZ8S74R:10001",
+              "last_error": null,
+              "last_error_code": null,
+              "max_attempts": 3,
+              "seq": 1,
+              "started_at": "2026-08-30T00:29:19.006509+00:00",
+              "status": "succeeded"
+            }
+          ],
+          "kind": "product",
+          "last_error": null,
+          "last_error_code": null,
+          "options": {
+            "result_sinks": [
+              "sqlite"
+            ]
+          },
+          "priority": 0,
+          "progress": {
+            "percent": 100.0,
+            "terminal_items": 1,
+            "total_items": 1
+          },
+          "started_at": "2026-08-30T00:29:19.006509+00:00",
+          "status": "succeeded",
+          "succeeded_items": 1,
+          "tenant_id": "local",
+          "total_items": 1,
+          "updated_at": "2026-08-30T00:29:24.093064+00:00"
+        }
+      ],
+      "lineage_status": "succeeded",
+      "ok": true,
+      "results": [
+        {
+          "collected_at": "2026-08-30T00:29:24.089290+00:00",
+          "data": {
+            "a_plus": 0,
+            "amazon_choice": false,
+            "amazon_choice_keyword": null,
+            "asin": "B07FZ8S74R",
+            "availability": "Currently unavailable.",
+            "best_seller_flag": false,
+            "best_sellers_rank": null,
+            "bought": "",
+            "bought_time_unit": "",
+            "brand": "Amazon",
+            "breadcrumbs_feature": null,
+            "breadcrumbs_feature_ids": null,
+            "bsr": [],
+            "bullet_points": [],
+            "buy_box_owner": "",
+            "buy_box_seller_id": "",
+            "buy_box_type": null,
+            "canonical_url": "https://www.amazon.com/dp/B07FZ8S74R?th=1&psc=1&language=en_US",
+            "city": "New York 10001",
+            "coupons": {
+              "save_percent": null,
+              "save_price": null,
+              "title": null
+            },
+            "created_at": "2026-08-30 00:29:23",
+            "currency": "USD",
+            "deal_badge": "",
+            "deal_end_time": "",
+            "delivery_info": " ",
+            "detail_rows": [],
+            "dimension_items": [
+              {
+                "asin": "B07FZ8S74R",
+                "created_at": "2026-08-30 00:29:23",
+                "dimensions": "",
+                "image_url": "https://www.amazon.com/dp/B07FZ8S74R?th=1&psc=1&language=en_US",
+                "market_place_id": "ATVPDKIKX0DER",
+                "parent_asin": "B07FZ8S74R",
+                "task_id": "item_4b9ae424b9064fb383df344568857b97"
+              }
+            ],
+            "execution_mode": "standard",
+            "extra_saving": {
+              "save_percent": null,
+              "save_price": null,
+              "title": null
+            },
+            "fba": false,
+            "fbt": null,
+            "first_page_review_imgs": [
+              "https://m.media-amazon.com/images/I/C1fzfdUM8US._AC_UC154,154_CACC,154,154_QL85_.jpg?aicid=community-reviews",
+              "https://m.media-amazon.com/images/I/51TFTvXfwwL._AC_UC154,154_CACC,154,154_QL85_.jpg?aicid=community-reviews",
+              "https://m.media-amazon.com/images/I/61xsTmjrhVL._AC_UC154,154_CACC,154,154_QL85_.jpg?aicid=community-reviews",
+              "https://m.media-amazon.com/images/I/41yTFnS5GyL._AC_UC154,154_CACC,154,154_QL85_.jpg?aicid=community-reviews",
+              "https://m.media-amazon.com/images/I/61e9Si044bL._AC_UC154,154_CACC,154,154_QL85_.jpg?aicid=community-reviews",
+              "https://m.media-amazon.com/images/I/41a+XBRldCL._AC_UC154,154_CACC,154,154_QL85_.jpg?aicid=community-reviews",
+              "https://m.media-amazon.com/images/I/71XodrrK5FL._AC_UC154,154_CACC,154,154_QL85_.jpg?aicid=community-reviews",
+              "https://m.media-amazon.com/images/I/61fQRl8D6aL._AC_UC154,154_CACC,154,154_QL85_.jpg?aicid=community-reviews",
+              "https://m.media-amazon.com/images/I/71vJci8eBlL._AC_UC154,154_CACC,154,154_QL85_.jpg?aicid=community-reviews",
+              "https://m.media-amazon.com/images/I/61wgogB0MkL._AC_UC154,154_CACC,154,154_QL85_.jpg?aicid=community-reviews",
+              "https://m.media-amazon.com/images/I/61o6APz9qdL._AC_UC154,154_CACC,154,154_QL85_.jpg?aicid=community-reviews",
+              "https://m.media-amazon.com/images/I/716hvzAFlRL._AC_UC154,154_CACC,154,154_QL85_.jpg?aicid=community-reviews"
+            ],
+            "generate_date": null,
+            "image_url": "https://m.media-amazon.com/images/I/61MZfowYoaL._AC_SL1000_.jpg",
+            "img": "https://m.media-amazon.com/images/I/61MZfowYoaL._AC_SY300_SX300_QL70_FMwebp_.jpg",
+            "imgs": [],
+            "inventory_num": 0,
+            "is_video": 0,
+            "last_price": null,
+            "lighting_deal_claimed": null,
+            "link": "https://www.amazon.com/dp/B07FZ8S74R?th=1&psc=1&language=en_US",
+            "marketplace_code": "US",
+            "marketplace_id": "ATVPDKIKX0DER",
+            "offsale": true,
+            "parent_asin": "B07FZ8S74R",
+            "parser_version": "amazon-product-parser/2.1.0",
+            "pasin": "B07FZ8S74R",
+            "price": null,
+            "prime_price": null,
+            "product_description": [],
+            "product_details": null,
+            "product_info": null,
+            "quality": {
+              "core_field_coverage": 0.8,
+              "legacy_field_coverage": 1.0,
+              "missing_core_fields": [
+                "price"
+              ]
+            },
+            "rating": "4.7 out of 5 stars",
+            "rating_count": "(1,038,115)",
+            "rating_num": 1038115,
+            "redirect_to": null,
+            "requested_postal_code": "10001",
+            "review_insight_label": [],
+            "review_summary": "",
+            "schema_version": "amazon.product.v2",
+            "score": 4.7,
+            "seller": null,
+            "seller_num": 0,
+            "ships_from": "",
+            "sku_num": 0,
+            "skus": [],
+            "star_percent": {
+              "1 star": "1%",
+              "2 star": "0%",
+              "3 star": "4%",
+              "4 star": "12%",
+              "5 star": "83%"
+            },
+            "task_id": "item_4b9ae424b9064fb383df344568857b97",
+            "title": "Echo Dot (3rd Gen, 2018 release) - Smart speaker with Alexa - Charcoal",
+            "used": false,
+            "zipcode": "10001"
+          },
+          "evidence": {
+            "bytes": 1571807,
+            "captured": false,
+            "http_status": 200,
+            "response_headers": {
+              "content-language": "",
+              "content-type": "text/html;charset=UTF-8"
+            },
+            "sha256": "0ee1ec9c9492f1aca59bfb0383809901b568b7ab788026ecb6d8725c58ac5191",
+            "source_url": "https://www.amazon.com/dp/B07FZ8S74R"
+          },
+          "id": "result_8e434b22cb7e4effbd1539d5ad825dae",
+          "input_key": "US:B07FZ8S74R:10001",
+          "item_id": "item_4b9ae424b9064fb383df344568857b97",
+          "job_id": "job_370230bb081c45ec9602bda4bee01f64",
+          "schema_version": "amazon.product.v2"
+        }
+      ],
+      "runner": {
+        "consumed_other_jobs": false,
+        "deliveries_processed": 0,
+        "mode": "job_scoped_in_process_worker",
+        "processed_items": 1,
+        "root_job_id": "job_370230bb081c45ec9602bda4bee01f64",
+        "scoped_job_ids": [
+          "job_370230bb081c45ec9602bda4bee01f64"
+        ],
+        "started": true,
+        "stopped_reason": "terminal"
+      }
+    }
+  },
+  "server_capabilities": {
+    "prompts": {
+      "listChanged": true
+    },
+    "resources": {
+      "listChanged": true,
+      "subscribe": true
+    },
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "server_info": {
+    "description": "Resumable Amazon crawl jobs, status, evidence, and results.",
+    "name": "amazon-crawler",
+    "title": "Amazon Crawler",
+    "version": "0.2.0"
+  },
+  "tool": "crawler_run_job"
+}

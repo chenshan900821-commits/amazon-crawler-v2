@@ -1,79 +1,115 @@
-# 真实运行视频与证据清单
+# 真实运行证据与复现说明
 
-本页记录 README 中四条演示视频的来源、执行入口和成功证据。演示于 2026-08-29 在受控本机环境完成，使用项目 `.env` 中已授权且未提交的 Cookie/代理配置，请求公开 Amazon US 商品页 `B07FZ8S74R`。
+本页回答三个问题：执行的是什么、实际抓到了什么、别人怎样按同样步骤复现。2026-08-30 的四次验证使用四个独立 Job，请求 Amazon US 的公开商品 `B07FZ8S74R`，配送邮编 `10001`。Cookie、代理、Redis URL 和 Token 只存在于本机 `.env`，没有出现在命令、截图、日志或仓库中。
 
-## 证据边界
+## 先说明证据类型
 
-- 四种入口分别创建独立 Job，不用同一任务结果冒充四种调用方式。
-- 视频只包含公开商品字段、任务状态、响应大小和哈希；不包含 Cookie、代理、Redis URL、Token 或签名密钥。
-- 终端视频是对真实运行输出的脱敏、压缩时间实录：保留命令、重试、终态、结果和证据，剪掉无信息的等待时间。
-- Web 视频由真实页面操作中的首页、已填写表单、执行中和结果详情关键画面组成。
-- Amazon 页面会变化。标题、评分、响应大小和响应哈希是当次事实，不是长期固定断言。
-- 这些演示证明四条受控本机路径在该样本上跑通，不替代全任务矩阵、长期稳定性或公网生产验收。
+- `live/*.typescript` 是终端程序当次 stdout/stderr 的原始记录，没有重新编写成功输出；其中 Agent 记录包含 Codex 的 Skill 读取、MCP Tool 调用参数、Tool 返回值和最终回答。
+- `live/web-*.png` 是真实页面按顺序操作时保存的浏览器截图，最终截图直接显示商品字段、HTTP 证据和完整结构化 JSON。
+- README 中原有 GIF/MP4 是依据 2026-08-29 真实运行结果制作的压缩时间证据回放，不是未经剪辑的连续屏幕录像。它们用于快速预览；要审计真实性，应以本页的 2026-08-30 原始记录、JSON 收据和独立 Job 为准。
+- 本次新增 Agent、MCP、Web 和 CLI 四条回放：Agent/MCP/CLI 由各自本次原始事件流或终端记录生成，Web 由本次浏览器逐步截图生成；四条都在画面和文档中标明“回放”。
+- 视频 SHA-256：Agent `6980d86c8446ca86493b7e89f1afdbe13276d5c37475ce9aa01139690040d8a3`；MCP `dce56c0b262eba604b27d55e042926328021e4cec20d023e9f9b19a55856298b`；Web `a02dcd13b474c7e2a3cbf88c283e428388b3fefcdf1c2e8aded337d082ac7787`；CLI `afe6ed69d04090735b6869103d83e130537dcc9bf9ecd9f46b87662fa765d91c`。Agent 原始事件流 SHA-256 为 `fea2d205bdcfb65d01b4fd22681b1eb80cea2130e3b0e01b7078bcb1223a9de3`。
+- Amazon 页面会变化，评论数、价格、响应字节数和 SHA-256 不应写成固定测试断言。
 
-## 四条独立真实任务
+## 四条独立任务
 
-| 入口 | Job ID | 类型 / 模式 | 尝试 | 终态 | 结果 | HTTP / 字节 | Amazon 响应 SHA-256 |
-|---|---|---|---:|---|---:|---|---|
-| Agent Skill | `job_faf30b929a1645f49902681865d2a3c7` | `amazon.product / standard` | 2 | `succeeded` | 1 | `200 / 1,564,297` | `d422cbfc849eeb8beac26383d103048c8334a392871a9f2c84aedd6eac156b92` |
-| MCP | `job_4d077f808a2143d7bb069c34609c26ca` | `product / standard` | 2 | `succeeded` | 1 | `200 / 1,563,695` | `923ea9cbdda731ddfa1c0d7bece8a9b1141eb49e99b408bf22bded1fa789ee58` |
-| Web | `job_d02afb53ad1b4017828b959f3818ccab` | `product_time / realtime` | 2 | `succeeded` | 1 | `200 / 1,563,679` | `ce4f8389cef0571f79629974dfd7443d20ab70f316067a20be52ba1a20d8e97e` |
-| CLI | `job_398ea5ba01844401a4736cb12ae86f04` | `product_time / standard` | 3 | `succeeded` | 1 | `200 / 1,563,292` | `d022cd6a914335f3d3cba4fa52d4141d7a39c9a1752227645d979c222aff542d` |
+| 入口 | Job ID | 终态 / 尝试 | 可见结果 | HTTP 证据 |
+|---|---|---|---|---|
+| Codex Agent + Skill + MCP | `job_b32ad252512649999fed195f8b93d3eb` | `succeeded` / 1 | 标题、品牌、评分、评论数、schema | `200` / `1,575,322` bytes / `126577…3710` |
+| MCP STDIO Client | `job_370230bb081c45ec9602bda4bee01f64` | `succeeded` / 1 | 同上 | `200` / `1,571,807` bytes / `0ee1ec…5191` |
+| Web 管理页 | `job_a0874e10fdf545b4b3934d2a8a613775` | `succeeded` / 1 | 同上，并可展开完整 JSON | `200` / `1,566,797` bytes / `cf712e…0fd4` |
+| CLI | `job_d8e5065844da48c9bc64a06fda0ca387` | `succeeded` / 1 | 同上 | `200` / `1,563,014` bytes / `67c2a3…5099` |
 
-四条结果都返回：
+四次都解析出：
 
 ```json
 {
   "asin": "B07FZ8S74R",
   "title": "Echo Dot (3rd Gen, 2018 release) - Smart speaker with Alexa - Charcoal",
-  "rating": "4.7 out of 5 stars"
+  "brand": "Amazon",
+  "rating": "4.7 out of 5 stars",
+  "schema_version": "amazon.product.v2"
 }
 ```
 
-不同时间读取到的评论数量等易变字段可能不同，因此未将其设为验收常量。
+完整、不省略的哈希和当次评论数见各入口的 JSON 收据：
 
-## 复现入口
+- [`agent-mcp-receipt.json`](assets/demos/live/agent-mcp-receipt.json)
+- [`mcp-client-receipt.json`](assets/demos/live/mcp-client-receipt.json)
+- [`web-receipt.json`](assets/demos/live/web-receipt.json)
+- [`cli-receipt.json`](assets/demos/live/cli-receipt.json)
 
-先完成 README 的安装与 `.env` 配置。真实秘密只能进入本机 `.env` 或部署平台 Secret。
+## README 最终复验
 
-### Agent Skill
+四条演示完成后，又严格按 README 的 CLI 主流程创建了一条全新任务，而不是读取上面的已有 Job：
 
-在 Codex 中：
+| Job ID | 终态 / 尝试 | 结果 | HTTP 证据 | Runner 边界 |
+|---|---|---|---|---|
+| `job_199e5bd78655453caf5d779d21831349` | `succeeded` / 1 | 1 条，标题/品牌/评分均非空 | `200` / `1,567,022` bytes / `0f3b2e…170` | `terminal`，未消费其他 Job |
 
-```text
-$operate-amazon-crawler 采集 US 站商品 B07FZ8S74R，配送邮编使用 10001；等待任务完成，并报告任务状态、结果数量、标题、评分和证据哈希。
-```
+完整收据：[`readme-final-verification-receipt.json`](assets/demos/live/readme-final-verification-receipt.json)。这说明仓库当前 README 的自包含命令确实能启动任务范围内的 Worker、完成实时请求并返回可审计结果；仍然只代表本次受控本机样本，不代表公网生产 SLA。
 
-不依赖 Agent 界面时，下面的命令复现 Skill 在 MCP 不可用时采用的确定性、安全后备路径：
+## 从零复现
+
+先完成 README 的“5 分钟拿到第一条结果”，确保：
 
 ```bash
-python skills/operate-amazon-crawler/scripts/crawler_cli.py run B07FZ8S74R \
-  --marketplace US \
-  --postal-code 10001 \
-  --max-attempts 3 \
-  --idempotency-key YOUR_REQUEST_ID \
-  --timeout-seconds 240
+amazon-crawler doctor
 ```
 
-### MCP
+返回 `configuration_ready=true`。这只证明配置结构完整，真实可用性仍要由下面任务的终态、非空结果和 HTTP 证据证明。
+
+### 1. Codex Agent + Agent Skill + MCP
+
+仓库已提供项目级 [`.codex/config.toml`](../.codex/config.toml)。用户信任仓库后，Codex 会按配置启动 `scripts/start_mcp_stdio.py`；启动器只安全读取 `.env` 中的 `CRAWLER_*`，不会执行 `.env`，也不需要把秘密粘贴到对话中。打开本仓库的 Codex 任务并输入：
+
+```text
+$operate-amazon-crawler 使用已经连接的 amazon-crawler MCP 工具真实抓取 Amazon US 商品 B07FZ8S74R，邮编 10001，kind=product_time，max_attempts=3。必须先调用 crawler_doctor；配置可用后调用 crawler_run_job。最后报告 job id、终态、结果数、商品标题、品牌、评分、评论数、HTTP 状态、响应字节数、SHA-256、采集时间和 schema。
+```
+
+当次真实 Agent 原始事件流：[`agent-codex-mcp-success-20260830.typescript`](assets/demos/live/agent-codex-mcp-success-20260830.typescript)。可以在其中搜索以下事件，逐步核对：
+
+```text
+"tool":"crawler_doctor"
+"tool":"crawler_run_job"
+"tool":"crawler_get_job"
+"tool":"crawler_get_results"
+"lineage_status":"succeeded"
+job_b32ad252512649999fed195f8b93d3eb
+```
+
+这份记录证明 Agent 确实执行了 Skill 编排，并通过 MCP Tool 抓取和二次读取持久化结果；不是只运行了 Skill 的后备脚本。
+
+### 2. MCP Server + Client
+
+本机 STDIO Client 会自动启动 Server，不需要先运行网页或 Worker：
 
 ```bash
 amazon-crawler-mcp-client smoke
 amazon-crawler-mcp-client call crawler_run_job \
-  --arguments '{"inputs":["B07FZ8S74R"],"kind":"product","marketplace_id":"US","postal_code":"10001","max_attempts":3,"idempotency_key":"YOUR_REQUEST_ID","timeout_seconds":240}'
+  --arguments '{"inputs":["B07FZ8S74R"],"kind":"product","marketplace_id":"US","postal_code":"10001","max_attempts":3,"idempotency_key":"换成本次请求的唯一编号","timeout_seconds":240}'
 ```
 
-握手成功只证明 MCP 链路可用。还必须检查 `configuration_ready=true`、`result.is_error=false`、业务终态为 `succeeded`，以及 `results` 非空。
+检查 `result.is_error=false`、`structured_content.lineage_status=succeeded`、`results` 非空和 `evidence.http_status=200`。当次原始记录：[`mcp-20260830.typescript`](assets/demos/live/mcp-20260830.typescript)。
 
-### Web
+### 3. Web 页面
 
 ```bash
 amazon-crawler serve --host 127.0.0.1 --port 3000
 ```
 
-打开 <http://127.0.0.1:3000>，选择“商品实时观测”、`Realtime`、US、邮编 `10001`，填写 ASIN 后创建任务。演示中的页面按“待执行 → 执行中 → 已完成”变化，详情最终显示 `1 / 1`、`TRY 2/3`、商品标题、评分、覆盖率、响应哈希、SQLite 已提交和重试事件。
+打开 <http://127.0.0.1:3000>，按下面顺序操作：
 
-### CLI
+1. 类型选择“商品实时观测”，模式选择 `Realtime`。
+2. 输入 `B07FZ8S74R`、站点 `US`、邮编 `10001`、最大尝试次数 `3`。
+3. 点击“创建任务”，打开任务详情；详情会从“待执行/执行中”自动刷新到“已完成”。
+4. 在结果卡直接查看标题、品牌、评分、评论数、HTTP 状态、字节数和完整 SHA-256；点击“查看本条完整结构化 JSON”可核对全部字段。
+
+实际操作截图按顺序保存：[`填写完成`](assets/demos/live/web-02-filled.png) → [`任务执行中`](assets/demos/live/web-04-running.png) → [`自动刷新后的结果`](assets/demos/live/web-09-auto-refreshed-result.png) → [`HTTP 与 SHA-256`](assets/demos/live/web-07-http-evidence.png) → [`完整 JSON`](assets/demos/live/web-08-json-expanded.png)。
+
+### 4. CLI
+
+CLI 的 `run` 自己启动任务范围内的临时 Worker，不需要网页或常驻 Worker：
 
 ```bash
 amazon-crawler run B07FZ8S74R \
@@ -81,19 +117,20 @@ amazon-crawler run B07FZ8S74R \
   --marketplace US \
   --postal-code 10001 \
   --max-attempts 3 \
-  --idempotency-key YOUR_REQUEST_ID \
+  --idempotency-key "换成本次请求的唯一编号" \
   --timeout-seconds 240
 ```
 
-CLI 返回中的 `runner.mode=job_scoped_in_process_worker`、`runner.consumed_other_jobs=false` 和 `runner.stopped_reason=terminal` 证明它启动的是任务范围内的临时 Worker。
+当次原始记录：[`cli-20260830.typescript`](assets/demos/live/cli-20260830.typescript)。
 
-## 视频文件完整性
+## 怎样判断不是“假成功”
 
-| 视频 | 时长 | 分辨率 | 文件 SHA-256 |
-|---|---:|---|---|
-| [`agent-skill.mp4`](assets/demos/agent-skill.mp4) | 26 秒 | 1280×720 | `ce4d8d3833d65ab8a6173511557ff27204e09780f313772239e531cc01a2a86b` |
-| [`mcp.mp4`](assets/demos/mcp.mp4) | 27 秒 | 1280×720 | `c4f454ae3a23ccfadd4ca559db1f5de0d17106b345f7ee373bc7db879a17ec46` |
-| [`web-control-plane.mp4`](assets/demos/web-control-plane.mp4) | 17 秒 | 1280×720 | `4ab634ece02581b146ef5f9f0f60e3e7cadcc6cf8e0af79e7031587a9f7e5f95` |
-| [`cli.mp4`](assets/demos/cli.mp4) | 27 秒 | 1280×720 | `4d748d49841b3042652bda2de2b7f3ccb4e32bfeaea6135345b5669af15ae697` |
+必须同时满足：
 
-同目录的 GIF 是 README 轻量预览，PNG 是视频封面；`frames/` 保留 Web 演示的四个真实关键画面，`raw/*.ass` 保留终端演示的脱敏字幕时间线，便于审阅媒体中展示了什么。
+1. `completed=true` 且 `lineage_status=succeeded`；
+2. Job 为 `succeeded`，成功数大于 0、失败数为 0；
+3. `results` 非空，并有实际商品标题等业务字段；
+4. `evidence.http_status=200`，同时记录响应字节数与 SHA-256；
+5. 自包含运行时 `runner.started=true`、`runner.stopped_reason=terminal`、`runner.consumed_other_jobs=false`。
+
+`created=true` 只表示任务已持久化，MCP 握手成功只表示协议链路可用，二者都不能单独证明抓取成功。

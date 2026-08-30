@@ -1,0 +1,52 @@
+{
+  "captured_at": "2026-08-30T00:52:46.613167+00:00",
+  "interface": "codex_agent_skill_via_mcp",
+  "skill": "operate-amazon-crawler",
+  "mcp_server": "amazon-crawler",
+  "secrets_disclosed": false,
+  "input": {
+    "asin": "B07FZ8S74R",
+    "kind": "product_time",
+    "marketplace_id": "US",
+    "postal_code": "10001",
+    "max_attempts": 3,
+    "idempotency_key": "readme-real-agent-mcp-20260830-v1"
+  },
+  "doctor": {
+    "configuration_ready": true,
+    "blocking_issues": []
+  },
+  "job": {
+    "id": "job_b32ad252512649999fed195f8b93d3eb",
+    "status": "succeeded",
+    "lineage_status": "succeeded",
+    "attempts": 1,
+    "succeeded_items": 1,
+    "failed_items": 0,
+    "result_count": 1
+  },
+  "runner": {
+    "mode": "job_scoped_in_process_worker",
+    "started": true,
+    "consumed_other_jobs": false,
+    "stopped_reason": "terminal"
+  },
+  "result": {
+    "asin": "B07FZ8S74R",
+    "title": "Echo Dot (3rd Gen, 2018 release) - Smart speaker with Alexa - Charcoal",
+    "brand": "Amazon",
+    "rating": "4.7 out of 5 stars",
+    "rating_count": "(1,038,112)",
+    "availability": "Currently unavailable.",
+    "envelope_schema": "amazon.product-observation.v1",
+    "data_schema": "amazon.product.v2",
+    "collected_at": "2026-08-30T00:52:46.613167+00:00"
+  },
+  "evidence": {
+    "http_status": 200,
+    "bytes": 1575322,
+    "sha256": "1265777f6af058f61895836991721ab7693f3698805ab4908e5a43c60d263710",
+    "source_url": "https://www.amazon.com/dp/B07FZ8S74R",
+    "raw_event_stream": "agent-codex-mcp-success-20260830.typescript"
+  }
+}

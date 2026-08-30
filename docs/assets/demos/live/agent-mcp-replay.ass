@@ -1,0 +1,29 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Header,Hiragino Sans GB,18,&H0093A4A8,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,2,0,1,0,0,7,62,62,35,1
+Style: Title,Hiragino Sans GB,42,&H00F4FCFD,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,0,0,7,70,70,74,1
+Style: Accent,Hiragino Sans GB,21,&H0058FFD2,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,0,0,7,72,72,134,1
+Style: Mono,Hiragino Sans GB,22,&H00D8E3E5,&H000000FF,&H00000000,&HAA132124,0,0,0,0,100,100,0,0,3,0,0,7,76,76,192,1
+Style: Success,Hiragino Sans GB,26,&H0058FFD2,&H000000FF,&H00000000,&HAA132124,1,0,0,0,100,100,0,0,3,0,0,7,76,76,192,1
+Style: Foot,Hiragino Sans GB,17,&H008FA4A7,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,1,50,50,28,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:30.00,Header,,0,0,0,,CODEX AGENT + SKILL + MCP · RAW EVENT STREAM REPLAY · 2026-08-30
+Dialogue: 0,0:00:00.00,0:00:04.50,Title,,0,0,0,,真实 Agent，不是包装脚本冒充
+Dialogue: 0,0:00:00.00,0:00:04.50,Accent,,0,0,0,,原始来源：agent-codex-mcp-success-20260830.typescript
+Dialogue: 0,0:00:04.50,0:00:09.50,Title,,0,0,0,,01 / Skill 先做脱敏预检
+Dialogue: 0,0:00:04.50,0:00:09.50,Mono,,0,0,0,,MCP Tool: crawler_doctor\Nconfiguration_ready: true\Nblocking_issues: []\Nsecret values disclosed: false
+Dialogue: 0,0:00:09.50,0:00:15.50,Title,,0,0,0,,02 / Agent 调用真实抓取 Tool
+Dialogue: 0,0:00:09.50,0:00:15.50,Mono,,0,0,0,,MCP Tool: crawler_run_job\Nkind: product_time · marketplace: US · postal: 10001\NASIN: B07FZ8S74R · max_attempts: 3\N临时 Worker 只处理当前任务链
+Dialogue: 0,0:00:15.50,0:00:23.50,Title,,0,0,0,,03 / Amazon 返回并解析出商品数据
+Dialogue: 0,0:00:15.50,0:00:23.50,Success,,0,0,0,,✓ job_b32ad252512649999fed195f8b93d3eb\N✓ lineage_status: succeeded · attempts: 1 · results: 1\N✓ Echo Dot (3rd Gen, 2018 release) · Amazon\N✓ Rating 4.7 / 5 · Reviews 1,038,112\N✓ HTTP 200 · 1,575,322 bytes
+Dialogue: 0,0:00:23.50,0:00:30.00,Title,,0,0,0,,04 / Agent 再读持久化结果复核
+Dialogue: 0,0:00:23.50,0:00:30.00,Mono,,0,0,0,,crawler_get_job → status: succeeded\Ncrawler_get_results → returned: 1\Nschema: amazon.product-observation.v1 / amazon.product.v2\NSHA-256: 1265777f6af058f61895836991721ab7\N          693f3698805ab4908e5a43c60d263710
+Dialogue: 0,0:00:00.00,0:00:30.00,Foot,,0,0,0,,由原始 MCP 事件流生成的压缩时间回放 · 非未经剪辑的连续录屏 · 原始记录与 JSON 收据已提交

@@ -1,0 +1,33 @@
+{
+  "captured_at": "2026-08-30T01:15:59.891154+00:00",
+  "purpose": "fresh end-to-end validation of the README CLI quick start under normal local network permissions",
+  "interface": "cli_from_readme",
+  "secret_values_disclosed": false,
+  "job": {
+    "id": "job_199e5bd78655453caf5d779d21831349",
+    "status": "succeeded",
+    "attempts": 1,
+    "succeeded_items": 1,
+    "failed_items": 0,
+    "result_count": 1
+  },
+  "runner": {
+    "started": true,
+    "stopped_reason": "terminal",
+    "consumed_other_jobs": false
+  },
+  "result": {
+    "asin": "B07FZ8S74R",
+    "title": "Echo Dot (3rd Gen, 2018 release) - Smart speaker with Alexa - Charcoal",
+    "brand": "Amazon",
+    "rating": "4.7 out of 5 stars",
+    "rating_count": "(1,038,112)",
+    "schema_envelope": "amazon.product-observation.v1",
+    "schema_data": "amazon.product.v2",
+    "evidence": {
+      "http_status": 200,
+      "bytes": 1567022,
+      "sha256": "0f3b2e136b48d38032ef57ee9ddb044de684ee9284fdf64842674f8e89724170"
+    }
+  }
+}

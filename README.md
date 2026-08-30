@@ -4,37 +4,54 @@
 
 > 当前阶段：P0 核心能力和离线测试已完成；MCP 已具备认证、scope、租户隔离、审计、限流、并发闸门和高风险操作审批，可用于本地开发与受控单机部署。普通 HTTP API 仍是本机管理面；真实站点和公网商业化验收仍需单独完成。
 
-## 真实可用性演示
+## 这次演示到底是不是真实的
 
-下面四条视频不是 UI Mock，也不是复用同一条缓存结果。它们分别通过 Agent Skill、MCP、Web 页面和正式 CLI 创建独立 Job，请求真实 Amazon US 商品页，并取得结构化商品数据、HTTP 200、响应字节数与独立 SHA-256。为了不把 Cookie、代理和 Token 录入仓库，终端演示剪掉了等待时间并只保留脱敏命令、状态迁移、结果摘要和证据；Web 演示保留了真实页面从填写任务、执行中到结果详情的连续关键画面。
+是，但要把证据类型说清楚。2026-08-30 我们重新从四个入口创建了四个独立 Job：真实 Codex Agent 通过 Agent Skill 编排 MCP、MCP STDIO Client、Web 页面和 CLI。四次都请求 Amazon US 商品 `B07FZ8S74R`，都取得了非空结构化结果、HTTP 200、响应字节数和独立 SHA-256。
 
-点击任一动图可打开对应的 1280×720 MP4 完整版。演示使用的 ASIN、Job ID、重试次数、结果字段、响应哈希和视频文件哈希见 [`docs/DEMO_EVIDENCE.md`](docs/DEMO_EVIDENCE.md)。这些证据证明 2026-08-29 的受控本机样本真实跑通，不等同于所有站点、所有任务类型或公网生产 SLA 已验收。
+其中 Agent 不是“运行一条包装脚本后配文案”：原始事件流明确记录了 `crawler_doctor → crawler_run_job → crawler_get_job → crawler_get_results` 四次 MCP Tool 调用。Job `job_b32ad252512649999fed195f8b93d3eb` 最终返回：
 
-### Web 页面：创建任务 → 自动执行 → 查看数据与证据
+```json
+{
+  "lineage_status": "succeeded",
+  "result_count": 1,
+  "asin": "B07FZ8S74R",
+  "title": "Echo Dot (3rd Gen, 2018 release) - Smart speaker with Alexa - Charcoal",
+  "brand": "Amazon",
+  "rating": "4.7 out of 5 stars",
+  "rating_count": "(1,038,112)",
+  "http_status": 200,
+  "bytes": 1575322,
+  "sha256": "1265777f6af058f61895836991721ab7693f3698805ab4908e5a43c60d263710",
+  "schema_version": "amazon.product.v2"
+}
+```
 
-[![Web 控制台真实采集演示](docs/assets/demos/web-control-plane.gif)](docs/assets/demos/web-control-plane.mp4)
+网页最终结果也直接显示商品字段、HTTP 证据，并可展开完整 JSON：
 
-实际 Job：`job_d02afb53ad1b4017828b959f3818ccab`；`product_time · realtime`；第 2 次尝试成功；页面显示标题、评分、覆盖率、SQLite 提交状态、HTTP 响应证据和事件时间线。
+![Web 页面真实抓取结果：商品字段、HTTP 200、响应大小和 SHA-256](docs/assets/demos/live/web-07-http-evidence.png)
 
-### Agent Skill：自然语言请求 → 安全预检 → 任务范围内 Worker → 结果
+下面四条是本次证据的压缩时间回放。Agent、MCP 和 CLI 由各自原始事件流或终端记录生成，Web 由真实浏览器逐步截图生成；点击动图打开 MP4。它们都明确标注为回放，原始记录紧随其后可供核对。
 
-[![Agent Skill 真实采集演示](docs/assets/demos/agent-skill.gif)](docs/assets/demos/agent-skill.mp4)
+[![Codex Agent、Skill 与 MCP 真实事件流回放](docs/assets/demos/live/agent-mcp-replay.gif)](docs/assets/demos/live/agent-mcp-replay.mp4)
 
-实际 Job：`job_faf30b929a1645f49902681865d2a3c7`；Skill 后备包装器真实执行；第 2 次尝试成功；`lineage_status=succeeded`，临时 Worker 到达 `terminal` 后退出。
+[![Web 页面真实操作步骤回放](docs/assets/demos/live/web-live.gif)](docs/assets/demos/live/web-live.mp4)
 
-### MCP：握手与工具发现 → `crawler_run_job` → 结构化结果
+[![MCP STDIO Server 与 Client 真实终端记录回放](docs/assets/demos/live/mcp-live-replay.gif)](docs/assets/demos/live/mcp-live-replay.mp4)
 
-[![MCP Server 和 Client 真实采集演示](docs/assets/demos/mcp.gif)](docs/assets/demos/mcp.mp4)
+[![CLI 自包含运行真实终端记录回放](docs/assets/demos/live/cli-live-replay.gif)](docs/assets/demos/live/cli-live-replay.mp4)
 
-实际 Job：`job_4d077f808a2143d7bb069c34609c26ca`；协议版本 `2026-07-28`；发现 13 个 Tool；`result.is_error=false` 且业务任务 `lineage_status=succeeded`。
+可审计材料：
 
-### CLI：无需页面或常驻 Worker，单命令等待完整结果
+- [真实 Agent 原始事件流](docs/assets/demos/live/agent-codex-mcp-success-20260830.typescript)与[紧凑 JSON 收据](docs/assets/demos/live/agent-mcp-receipt.json)
+- [MCP 原始终端记录](docs/assets/demos/live/mcp-20260830.typescript)与[紧凑 JSON 收据](docs/assets/demos/live/mcp-client-receipt.json)
+- [Web 操作截图与 JSON 收据](docs/assets/demos/live/web-receipt.json)
+- [CLI 原始终端记录](docs/assets/demos/live/cli-20260830.typescript)与[紧凑 JSON 收据](docs/assets/demos/live/cli-receipt.json)
+- [按本 README 从头执行的最终复验收据](docs/assets/demos/live/readme-final-verification-receipt.json)：全新 Job `job_199e5bd78655453caf5d779d21831349`，首次尝试成功，HTTP `200`，取得 `1` 条商品结果
+- [逐步复现、四个 Job 和成功判定规则](docs/DEMO_EVIDENCE.md)
 
-[![CLI 真实采集演示](docs/assets/demos/cli.gif)](docs/assets/demos/cli.mp4)
+`docs/assets/demos/` 根目录中保留的旧 GIF/MP4 是根据 2026-08-29 独立真实结果制作的压缩时间证据回放；本节展示的 `live/*` 是 2026-08-30 当前证据回放。两者都不冒充未经剪辑的连续录屏。真实性审计请以 2026-08-30 原始事件流、截图、JSON 收据和独立 Job 为准。这里证明的是受控本机样本可运行，不代表全部任务类型或公网生产 SLA 已验收。
 
-实际 Job：`job_398ea5ba01844401a4736cb12ae86f04`；两次有限重试后第 3 次成功；返回一条 `amazon.product-observation.v1` 结果并持久化到 SQLite。
-
-## 先看这里：从安装到拿到结果
+## 5 分钟拿到第一条结果
 
 这一节是项目的唯一主运行入口。第一次使用时按顺序执行即可；后面的章节用于解释配置、任务类型和部署方式。
 
@@ -74,7 +91,7 @@ chmod 600 .env
 
 每个占位符具体代表什么，见[配置真实抓取资源](#配置真实抓取资源)。真实 Cookie、代理凭证和数据库连接只放在本机 `.env` 或部署平台 Secret 中。
 
-项目不会自动读取 `.env`。每次打开新终端，都先执行：
+正式 CLI、API 和 Worker 不会自动读取 `.env`。每次打开新终端并直接运行这些入口时，都先执行：
 
 ```bash
 source .venv/bin/activate
@@ -82,6 +99,8 @@ set -a
 source .env
 set +a
 ```
+
+例外：Agent Skill 的后备包装器和项目级 Codex MCP 启动器会安全读取 `.env` 中的 `CRAWLER_*`，不执行 Shell；因此从 Codex 使用本仓库时，不需要先 `source .env`，更不要把秘密粘贴到对话里。
 
 先运行脱敏配置检查。它只检查是否缺项和格式是否合理，不连接 Amazon、Redis 或代理，也不会显示任何秘密值：
 
@@ -127,7 +146,11 @@ amazon-crawler run B07FZ8S74R \
   --postal-code 10001
 ```
 
+本 README 发布前又按上述流程创建了一个全新任务 `job_199e5bd78655453caf5d779d21831349`。它在首次尝试得到 `succeeded`、`1` 条结果和 HTTP `200`；标题、评分、响应字节数、完整 SHA-256 等审计字段见[最终复验收据](docs/assets/demos/live/readme-final-verification-receipt.json)。这是一条独立于四段演示的新验证，不是复用已有 Job。
+
 `run` 只领取它自己创建或命中的幂等根任务及其派生任务，不会顺手执行数据库中其他等待任务。它返回的 `runner.started=true` 表示临时 Worker 已启动，`runner.stopped_reason=terminal` 表示任务链已到终态；最终应检查 `lineage_status`、`jobs` 和 `results`。
+
+不要把 `ok=true` 当成抓取成功。只有 `lineage_status=succeeded`、`results` 非空且结果中存在 HTTP/哈希证据才表示拿到了数据。若看到 `resource_provider_error` 和空结果，表示任务已执行，但请求前无法取得 Cookie 或代理；`doctor` 只检查配置结构，不能证明外部资源在线。先检查当前进程/沙箱是否允许访问 Redis、代理提取服务和 Amazon，再检查动态代理供应商额度、白名单及接口是否仍返回纯文本 `host:port`；固定代理则检查网关连通和认证。`runner.stopped_reason=timeout` 时任务仍保留断点，资源恢复后复用同一 `idempotency_key` 可继续；若 Job 已终态 `failed`，修复资源后应使用新的请求编号创建新任务，并保留失败 Job 供审计。
 
 如果只想把任务放入已有的常驻部署，不等待执行，使用队列模式：
 
@@ -223,61 +246,39 @@ python skills/operate-amazon-crawler/scripts/crawler_cli.py events JOB_ID
 
 ### Agent Skill 端到端示例与真实结果
 
-上面的自然语言请求不只是“生成一条命令”。Agent 会先执行 `doctor`；配置缺失时只报告需要补齐的环境变量名，不会要求用户在对话中粘贴秘密。配置通过后，已连接 MCP 时调用 `crawler_run_job`，否则调用 Skill 自带的安全包装脚本。两条路径都会启动任务范围内的临时 Worker、等待终态、读取结果，然后退出。
+仓库已经配置项目级 MCP。用户信任仓库后，Codex 读取 [`.codex/config.toml`](.codex/config.toml)，自动启动 [`scripts/start_mcp_stdio.py`](scripts/start_mcp_stdio.py)；启动器安全读取本机 `.env` 中的 `CRAWLER_*`，不执行 `.env`，也不把秘密传给 Agent。无需预先启动网页、API 或 Worker。
 
-可以不依赖 Agent 界面，直接复现 Skill 的后备执行路径。`YOUR_REQUEST_ID` 应替换成调用方本次请求的稳定编号；重试同一次业务请求时复用它，新请求使用新编号：
+在本仓库的 Codex 任务中输入：
+
+```text
+$operate-amazon-crawler 使用已经连接的 amazon-crawler MCP 工具真实抓取 Amazon US 商品 B07FZ8S74R，邮编 10001，kind=product_time，max_attempts=3。必须先调用 crawler_doctor；配置可用后调用 crawler_run_job。最后报告 job id、终态、结果数、商品标题、品牌、评分、评论数、HTTP 状态、响应字节数、SHA-256、采集时间和 schema。
+```
+
+2026-08-30 的真实 Codex Agent 按以下顺序执行：
+
+```text
+crawler_doctor
+  → crawler_run_job
+  → crawler_get_job
+  → crawler_get_results
+```
+
+最终 Job `job_b32ad252512649999fed195f8b93d3eb` 为 `succeeded`，1 次尝试得到 1 条结果；商品为 Echo Dot，品牌 Amazon，评分 `4.7 out of 5 stars`，评论数 `(1,038,112)`；HTTP `200`，响应 `1,575,322` 字节，SHA-256 为 `1265777f6af058f61895836991721ab7693f3698805ab4908e5a43c60d263710`。Agent 随后通过 MCP 二次读取 Job 和 SQLite 标准结果，不是只相信创建回执。
+
+[查看原始 Agent 事件流](docs/assets/demos/live/agent-codex-mcp-success-20260830.typescript) · [查看紧凑 JSON 收据](docs/assets/demos/live/agent-mcp-receipt.json) · [查看完整复现步骤](docs/DEMO_EVIDENCE.md#1-codex-agent--agent-skill--mcp)
+
+MCP 不可用时，Skill 才使用确定性后备脚本。可以单独验证后备路径，但这不等价于“Agent 已通过 MCP”：
 
 ```bash
 python skills/operate-amazon-crawler/scripts/crawler_cli.py run B07FZ8S74R \
   --marketplace US \
   --postal-code 10001 \
   --max-attempts 3 \
-  --idempotency-key YOUR_REQUEST_ID \
+  --idempotency-key "换成本次请求的唯一编号" \
   --timeout-seconds 240
 ```
 
-2026-08-29 使用仓库本机 `.env` 中已授权、未提交的 Cookie/代理配置进行了真实 Amazon US 站验证。第一次上游请求出现可重试 `network_error`，第二次自动重试成功。下面是实际返回的脱敏节选；商品页面内容会变化，因此标题、评分、响应大小和哈希不应被当成固定测试值：
-
-```json
-{
-  "ok": true,
-  "created": true,
-  "completed": true,
-  "lineage_status": "succeeded",
-  "job": {
-    "id": "job_faf30b929a1645f49902681865d2a3c7",
-    "status": "succeeded",
-    "total_items": 1,
-    "succeeded_items": 1,
-    "failed_items": 0,
-    "checkpoint_seq": 1,
-    "items": [{"attempts": 2, "status": "succeeded"}]
-  },
-  "results": [{
-    "data": {
-      "asin": "B07FZ8S74R",
-      "title": "Echo Dot (3rd Gen, 2018 release) - Smart speaker with Alexa - Charcoal",
-      "rating": "4.7 out of 5 stars",
-      "schema_version": "amazon.product.v2"
-    },
-    "evidence": {
-      "http_status": 200,
-      "bytes": 1564297,
-      "sha256": "d422cbfc849eeb8beac26383d103048c8334a392871a9f2c84aedd6eac156b92"
-    }
-  }],
-  "runner": {
-    "mode": "job_scoped_in_process_worker",
-    "started": true,
-    "consumed_other_jobs": false,
-    "stopped_reason": "terminal"
-  }
-}
-```
-
-判断 Skill 是否真正完成，不能只看 `ok=true` 或 `created=true`。本例同时满足 `completed=true`、`lineage_status=succeeded`、全部 Job 到达终态、`succeeded_items=1`、`results` 非空、证据为 HTTP 200，以及 `runner.stopped_reason=terminal`。如果最终是 `partial` 或 `failed`，Agent 必须如实报告失败项，不能把“流程执行完了”描述成“数据采集成功”。
-
-搜索任务的 `results` 外层是一条“页面结果信封”，真实搜索行数在 `results[0].data.row_count`，商品列表在 `results[0].data.items`；不能把外层数组长度误当成搜索商品数量。完整安全边界和输入契约见 [`skills/operate-amazon-crawler/SKILL.md`](skills/operate-amazon-crawler/SKILL.md)。
+判断是否真正完成，必须同时检查 `completed=true`、`lineage_status=succeeded`、非空 `results`、HTTP 200 证据和 `runner.stopped_reason=terminal`；`ok=true` 或 `created=true` 单独都不够。搜索任务的真实行数位于 `results[0].data.row_count`，不要把外层结果信封数量误当成商品数量。安全边界和输入契约见 [`skills/operate-amazon-crawler/SKILL.md`](skills/operate-amazon-crawler/SKILL.md)。
 
 ## 使用 MCP Server 和 Client
 
@@ -367,7 +368,7 @@ amazon-crawler-mcp-client call crawler_run_job \
   --arguments '{"inputs":["B07FZ8S74R"],"kind":"product","marketplace_id":"US","postal_code":"10001","max_attempts":3,"idempotency_key":"YOUR_REQUEST_ID","timeout_seconds":240}'
 ```
 
-2026-08-29 对同一公开商品进行了独立的 MCP 真实请求。第一次请求遇到可重试网络错误，第二次自动恢复；MCP Tool 总耗时约 29 秒。以下是实际响应的脱敏节选：
+2026-08-30 对公开商品进行了独立的 MCP 真实请求。实际 Job `job_370230bb081c45ec9602bda4bee01f64` 第 1 次尝试成功。以下是实际响应的紧凑节选：
 
 ```json
 {
@@ -377,28 +378,29 @@ amazon-crawler-mcp-client call crawler_run_job \
   "result": {
     "is_error": false,
     "structured_content": {
-      "created": true,
       "completed": true,
       "lineage_status": "succeeded",
       "job": {
-        "id": "job_4d077f808a2143d7bb069c34609c26ca",
+        "id": "job_370230bb081c45ec9602bda4bee01f64",
         "status": "succeeded",
         "total_items": 1,
         "succeeded_items": 1,
         "failed_items": 0,
-        "items": [{"attempts": 2, "status": "succeeded"}]
+        "items": [{"attempts": 1, "status": "succeeded"}]
       },
       "results": [{
         "data": {
           "asin": "B07FZ8S74R",
           "title": "Echo Dot (3rd Gen, 2018 release) - Smart speaker with Alexa - Charcoal",
+          "brand": "Amazon",
           "rating": "4.7 out of 5 stars",
+          "rating_count": "(1,038,115)",
           "schema_version": "amazon.product.v2"
         },
         "evidence": {
           "http_status": 200,
-          "bytes": 1563695,
-          "sha256": "923ea9cbdda731ddfa1c0d7bece8a9b1141eb49e99b408bf22bded1fa789ee58"
+          "bytes": 1571807,
+          "sha256": "0ee1ec9c9492f1aca59bfb0383809901b568b7ab788026ecb6d8725c58ac5191"
         }
       }],
       "runner": {
@@ -411,6 +413,8 @@ amazon-crawler-mcp-client call crawler_run_job \
   }
 }
 ```
+
+[查看原始 MCP 终端记录](docs/assets/demos/live/mcp-20260830.typescript) · [查看紧凑 JSON 收据](docs/assets/demos/live/mcp-client-receipt.json)
 
 这里有三层不同的成功证据：外层 `ok=true` 证明 Client/协议流程完成，`result.is_error=false` 证明 Tool 调用没有返回 MCP 错误，`structured_content.lineage_status=succeeded` 加上非空 `results` 和 HTTP 200 证据才证明本次采集成功。`created=true` 单独只证明任务已经持久化，不能作为采集完成证据。
 
@@ -429,24 +433,21 @@ Server 不接受 Cookie、代理、Redis/MySQL URL、数据库路径、Bearer To
 
 ### 配置 Codex 使用本机 MCP
 
-先在终端加载 `.env`，再从同一个终端启动 Codex。项目级 `.codex/config.toml` 可以只声明命令和允许转发的变量名，不写真实秘密：
+仓库已提交项目级 [`.codex/config.toml`](.codex/config.toml)：
 
 ```toml
 [mcp_servers.amazon-crawler]
-command = "/ABSOLUTE_PATH/amazon-crawler-v2/.venv/bin/amazon-crawler-mcp"
-cwd = "/ABSOLUTE_PATH/amazon-crawler-v2"
-env_vars = [
-  "CRAWLER_DB_PATH",
-  "CRAWLER_AMAZON_COOKIE",
-  "CRAWLER_COOKIE_REDIS_URL",
-  "CRAWLER_HTTP_PROXY",
-  "CRAWLER_PROXY_EXTRACT_URL",
-  "CRAWLER_PROXY_USERNAME",
-  "CRAWLER_PROXY_PASSWORD"
-]
+command = ".venv/bin/python"
+args = ["scripts/start_mcp_stdio.py"]
+cwd = "."
+startup_timeout_sec = 20
+tool_timeout_sec = 600
+enabled = true
 ```
 
-把 `/ABSOLUTE_PATH/amazon-crawler-v2` 替换为本机仓库绝对路径。只需要转发实际采用的 Cookie 和代理方式；不需要把上面所有可选变量都配置成值。修改 MCP 配置后重启 Codex，再用 `/mcp` 查看连接状态。
+安装依赖、创建本机 `.env` 后，用 Codex 打开仓库并信任项目即可；修改配置后重启 Codex，再用 `/mcp` 查看 `amazon-crawler` 是否连接。官方配置规则要求项目级 `.codex/config.toml` 只在可信项目中加载，STDIO Server 使用 `command` 和 `args` 启动，见 [OpenAI Codex Configuration Reference](https://learn.chatgpt.com/docs/config-file/config-reference)。
+
+`scripts/start_mcp_stdio.py` 复用 Skill 的安全 `.env` 读取器，只导入 `CRAWLER_*`，不执行 Shell，不打印秘密。这样用户不需要把 Cookie/代理逐项复制进 Codex 配置，也不需要在对话中粘贴秘密。其他 MCP Host 若不使用这个项目启动器，则必须按 Host 的方式把所需 `CRAWLER_*` 转发给 Server。
 
 ### Streamable HTTP
 
@@ -688,7 +689,7 @@ flowchart LR
 
 ## 配置真实抓取资源
 
-运行时只读取进程环境变量，不会自动加载 `.env`。复制、加载和启动命令统一见[从安装到拿到结果](#先看这里从安装到拿到结果)，这里仅解释各配置项的真实含义。
+正式 CLI、API 和 Worker 只读取进程环境变量，不会自动加载 `.env`；Agent Skill 后备包装器和项目级 Codex MCP 启动器会安全读取其中的 `CRAWLER_*`。复制、加载和启动命令统一见[5 分钟拿到第一条结果](#5-分钟拿到第一条结果)，这里仅解释各配置项的真实含义。
 
 仓库中的 [`.env.example`](.env.example) 只定义字段、格式和安全默认值，必须保持为占位符或空值。本机 `.env` 已被 Git 忽略；正式部署应使用部署平台的 Secret 管理功能，不要把 Cookie、代理账号、提取链接或 Redis URL 写进镜像、启动脚本、Job API 或 Agent 参数。
 

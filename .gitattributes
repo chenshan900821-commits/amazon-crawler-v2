@@ -1,0 +1,3 @@
+# Preserve terminal recordings byte-for-byte. They contain PTY control bytes and
+# CRLF sequences, so treating them as source text would corrupt raw evidence.
+docs/assets/demos/live/*.typescript -text -diff

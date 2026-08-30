@@ -1,4 +1,14 @@
-const state = { jobs: [], filter: "", timer: null, cookieFeature: null, cookiePools: [], marketplaces: [], cookieRunning: false };
+const state = {
+  jobs: [],
+  filter: "",
+  timer: null,
+  detailTimer: null,
+  detailJobId: null,
+  cookieFeature: null,
+  cookiePools: [],
+  marketplaces: [],
+  cookieRunning: false,
+};
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
 
@@ -29,6 +39,7 @@ function toast(message, error = false) {
 }
 
 const statusLabel = status => ({pending:"待执行",running:"执行中",pause_requested:"暂停中",paused:"已暂停",cancel_requested:"取消中",cancelled:"已取消",succeeded:"已完成",partial:"部分完成",failed:"失败"}[status] || status);
+const terminalStatuses = new Set(["cancelled", "succeeded", "partial", "failed"]);
 const canPause = s => ["pending", "running"].includes(s);
 const canResume = s => ["paused", "pause_requested"].includes(s);
 const canCancel = s => !["cancelled", "succeeded", "partial", "failed"].includes(s);
@@ -181,6 +192,48 @@ function resultSummary(result) {
   return { title, detail: values.join(" · ") };
 }
 
+function resultValue(value) {
+  if (value == null || value === "") return "—";
+  if (typeof value === "boolean") return value ? "是" : "否";
+  return String(value);
+}
+
+function resultCard(result) {
+  const data = result.data || {};
+  const item = data.item || data;
+  const evidence = result.evidence || {};
+  const summary = resultSummary(result);
+  const fields = [
+    ["ASIN", item.asin],
+    ["品牌", item.brand],
+    ["评分", item.rating || item.score],
+    ["评论数", item.rating_count || item.rating_num],
+    ["价格", item.price || item.selling_price],
+    ["可售状态", item.availability],
+    ["站点", item.marketplace_code || item.marketplace_id],
+    ["配送邮编", item.requested_postal_code || item.zipcode],
+    ["HTTP 状态", evidence.http_status],
+    ["响应字节", evidence.bytes == null ? null : Number(evidence.bytes).toLocaleString()],
+    ["采集时间", result.collected_at ? new Date(result.collected_at).toLocaleString() : null],
+    ["数据契约", result.schema_version],
+  ];
+  const publicPayload = {
+    job_id: result.job_id,
+    item_id: result.item_id,
+    collected_at: result.collected_at,
+    schema_version: result.schema_version,
+    data: result.data,
+    evidence: result.evidence,
+  };
+  return `<div class="result-card result-proof">
+    <strong>${escapeHtml(summary.title)}</strong>
+    <p>${escapeHtml(summary.detail)}</p>
+    <div class="result-proof-grid">${fields.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(resultValue(value))}</b></div>`).join("")}</div>
+    <div class="result-hash"><span>Amazon 响应 SHA-256</span><code>${escapeHtml(resultValue(evidence.sha256))}</code></div>
+    <details><summary>查看本条完整结构化 JSON</summary><pre>${escapeHtml(JSON.stringify(publicPayload, null, 2))}</pre></details>
+  </div>`;
+}
+
 function eventSummary(event) {
   const values = [event.event_type];
   if (event.payload?.code) values.push(event.payload.code);
@@ -202,12 +255,14 @@ function deliverySummary(delivery) {
 }
 
 async function showDetail(jobId) {
+  state.detailJobId = jobId;
   const [{ job }, { results }, { events }, { deliveries }] = await Promise.all([
     api(`/api/v1/jobs/${encodeURIComponent(jobId)}`),
     api(`/api/v1/jobs/${encodeURIComponent(jobId)}/results`),
     api(`/api/v1/jobs/${encodeURIComponent(jobId)}/events?limit=30`),
     api(`/api/v1/jobs/${encodeURIComponent(jobId)}/deliveries?limit=30`),
   ]);
+  if (state.detailJobId !== jobId) return;
   $("#drawerTitle").textContent = job.id;
   $("#drawerBody").innerHTML = `
     <div class="detail-grid">
@@ -216,15 +271,25 @@ async function showDetail(jobId) {
       <div><span>成功 / 失败</span><strong>${job.succeeded_items} / ${job.failed_items}</strong></div><div><span>创建时间</span><strong>${new Date(job.created_at).toLocaleString()}</strong></div>
     </div>
     <h3>采集项目</h3>${job.items.map(item => `<div class="item-row">#${item.seq} · ${escapeHtml(inputSummary(item.input, item.input_key))} · ${escapeHtml(statusLabel(item.status))} · TRY ${item.attempts}/${item.max_attempts}${item.last_error_code ? `<br><span style="color:#ff9f43">${escapeHtml(item.last_error_code)} · ${escapeHtml(item.last_error)}</span>` : ''}</div>`).join("")}
-    <h3>结果证据</h3>${results.length ? results.map(result => { const summary = resultSummary(result); return `<div class="result-card"><strong>${escapeHtml(summary.title)}</strong><p>${escapeHtml(summary.detail)}</p></div>`; }).join("") : '<div class="empty" style="padding:30px">暂无结果</div>'}
+    <h3>结果证据</h3>${results.length ? results.map(resultCard).join("") : '<div class="empty" style="padding:30px">暂无结果</div>'}
     <h3>结果存储</h3><div class="result-card"><strong>sqlite · 已提交</strong><p>任务、断点与结果原本位于本地控制库</p></div>${deliveries.length ? deliveries.map(delivery => `<div class="result-card delivery ${escapeHtml(delivery.status)}"><strong>${escapeHtml(delivery.sink_name)} · ${escapeHtml(deliveryLabel(delivery.status))}</strong><p>${escapeHtml(deliverySummary(delivery))}${delivery.last_error ? ` · ${escapeHtml(delivery.last_error)}` : ""}</p></div>`).join("") : '<p class="input-help">本任务未选择其他结果去向。</p>'}
     <h3>状态事件</h3>${events.map(event => `<div class="event-row"><time>${new Date(event.created_at).toLocaleString()}</time>${escapeHtml(eventSummary(event))}${event.item_id ? ` · ${escapeHtml(event.item_id.slice(0, 16))}` : ''}</div>`).join("")}
   `;
   $("#drawer").classList.add("open"); $("#drawerBackdrop").classList.add("open");
+  clearTimeout(state.detailTimer);
+  state.detailTimer = terminalStatuses.has(job.status) ? null : setTimeout(() => {
+    if (state.detailJobId === jobId) showDetail(jobId).catch(error => toast(error.message, true));
+  }, 1200);
 }
 
 async function refresh() { try { await Promise.all([loadJobs(), loadMetrics(), loadResourceHealth(), loadCookieResources()]); } catch (error) { toast(error.message, true); } }
-function closeDrawer() { $("#drawer").classList.remove("open"); $("#drawerBackdrop").classList.remove("open"); }
+function closeDrawer() {
+  state.detailJobId = null;
+  clearTimeout(state.detailTimer);
+  state.detailTimer = null;
+  $("#drawer").classList.remove("open");
+  $("#drawerBackdrop").classList.remove("open");
+}
 
 function applyKindConfig() {
   const kind = $("#kind").value;

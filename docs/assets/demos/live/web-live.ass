@@ -1,0 +1,20 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Badge,Hiragino Sans GB,17,&H0058FFD2,&H000000FF,&H00000000,&HCC0A1113,1,0,0,0,100,100,1,0,3,0,0,7,24,24,22,1
+Style: Caption,Hiragino Sans GB,24,&H00F4FCFD,&H000000FF,&H00000000,&HDD0A1113,1,0,0,0,100,100,0,0,3,0,0,2,42,42,34,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:24.00,Badge,,0,0,0,,WEB REAL BROWSER STEPS · JOB job_a0874e10fdf545b4b3934d2a8a613775 · 2026-08-30
+Dialogue: 0,0:00:00.00,0:00:03.50,Caption,,0,0,0,,01 / 填写真实 ASIN、US、10001 和 product_time
+Dialogue: 0,0:00:03.50,0:00:07.00,Caption,,0,0,0,,02 / 点击创建任务，服务返回独立 Job ID
+Dialogue: 0,0:00:07.00,0:00:10.50,Caption,,0,0,0,,03 / 内置 Worker 正在执行；详情保持打开
+Dialogue: 0,0:00:10.50,0:00:15.00,Caption,,0,0,0,,04 / 无需关闭重开，详情自动刷新为 succeeded
+Dialogue: 0,0:00:15.00,0:00:19.50,Caption,,0,0,0,,05 / 页面直接显示标题、评分、HTTP 200、字节数与 SHA-256
+Dialogue: 0,0:00:19.50,0:00:24.00,Caption,,0,0,0,,06 / 展开完整结构化 JSON，核对全部抓取字段
