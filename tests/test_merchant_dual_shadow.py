@@ -19,6 +19,10 @@ from tests.test_controlled_v2_shadow import valid_plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures"
+REFERENCE_SOURCE_AVAILABLE = (
+    (PROJECT_ROOT.parent / "settings/config.py").is_file()
+    and (PROJECT_ROOT.parent / "tools/merchant_parser_utils.py").is_file()
+)
 
 
 def merchant_plan() -> dict[str, object]:
@@ -84,6 +88,10 @@ class MerchantDualShadowTests(unittest.TestCase):
             MERCHANT_KINDS,
         )
 
+    @unittest.skipUnless(
+        REFERENCE_SOURCE_AVAILABLE,
+        "optional migration-reference source is not present in this checkout",
+    )
     def test_current_legacy_merchant_source_can_be_loaded_safely(self) -> None:
         parser = _load_current_legacy_merchant_parser(PROJECT_ROOT.parent)
         task = {

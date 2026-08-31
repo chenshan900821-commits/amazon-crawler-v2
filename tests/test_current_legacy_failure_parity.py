@@ -31,6 +31,12 @@ from scripts.collect_failure_dual_shadow import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LEGACY_ROOT = PROJECT_ROOT.parent
+LEGACY_SOURCE_AVAILABLE = (
+    (LEGACY_ROOT / "settings/config.py").is_file()
+    and (LEGACY_ROOT / "tools/product_parser_utils.py").is_file()
+    and (LEGACY_ROOT / "tools/search_parser_utils.py").is_file()
+    and (LEGACY_ROOT / "tools/merchant_parser_utils.py").is_file()
+)
 MARKET_ID = "ATVPDKIKX0DER"
 NO_PAGE = (
     "Sorry! We couldn't find that page. Try searching or go to Amazon's home page."
@@ -136,6 +142,10 @@ def expected_no_result_code(kind: str) -> str:
     }[kind]
 
 
+@unittest.skipUnless(
+    LEGACY_SOURCE_AVAILABLE,
+    "optional migration-reference source is not present in this checkout",
+)
 class CurrentLegacyFailureParityTests(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls) -> None:

@@ -8,9 +8,14 @@ from scripts.audit_legacy_platform_contracts import audit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OLD_ROOT = PROJECT_ROOT.parent
+REFERENCE_SOURCE_AVAILABLE = (OLD_ROOT / "main.py").is_file()
 
 
 class LegacyPlatformAuditTests(unittest.TestCase):
+    @unittest.skipUnless(
+        REFERENCE_SOURCE_AVAILABLE,
+        "optional migration-reference source is not present in this checkout",
+    )
     def test_legacy_platform_mechanisms_have_v2_replacements(self) -> None:
         report = audit(OLD_ROOT, PROJECT_ROOT)
 
