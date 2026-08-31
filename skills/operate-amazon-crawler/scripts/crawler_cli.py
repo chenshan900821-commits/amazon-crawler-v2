@@ -82,6 +82,16 @@ def load_project_dotenv(project_root: Path = PROJECT_ROOT) -> bool:
 
 def main() -> None:
     args = sys.argv[1:]
+    if args in (["--help"], ["-h"]):
+        print(
+            "usage: crawler_cli.py "
+            "{doctor,capabilities,run,create,list,show,pause,resume,cancel,results,events,deliveries,metrics} ...\n"
+            "\n"
+            "This Agent Skill wrapper safely loads project CRAWLER_* values from .env.\n"
+            "Use run for a self-contained crawl; create only queues work for an existing Worker.\n"
+            "Run doctor before creating work. Secrets are never accepted as command arguments."
+        )
+        return
     if not args or args[0] not in ALLOWED_COMMANDS:
         fail("the Agent Skill only permits safe job operations")
     if "--db" in args:

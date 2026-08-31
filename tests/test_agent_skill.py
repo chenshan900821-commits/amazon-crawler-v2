@@ -18,6 +18,18 @@ WRAPPER = SKILL_ROOT / "scripts" / "crawler_cli.py"
 
 
 class AgentSkillTests(unittest.TestCase):
+    def test_wrapper_help_is_safe_and_actionable(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, str(WRAPPER), "--help"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("Use run for a self-contained crawl", completed.stdout)
+        self.assertNotIn("Cookie=", completed.stdout)
+
     def _environment(
         self,
         db_path: Path,

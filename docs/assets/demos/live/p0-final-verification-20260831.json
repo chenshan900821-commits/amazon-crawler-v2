@@ -1,0 +1,49 @@
+{
+  "verified_at": "2026-08-31T12:25:33.617471+00:00",
+  "scope": "P0 local Agent Skill and MCP end-to-end verification",
+  "target": {
+    "asin": "B07FZ8S74R",
+    "kind": "product_time",
+    "marketplace_id": "US",
+    "postal_code": "10001"
+  },
+  "agent_skill": {
+    "job_id": "job_98079106aa494722b87266bfd436f950",
+    "lineage_status": "succeeded",
+    "attempts": 1,
+    "result_count": 1,
+    "title": "Echo Dot (3rd Gen, 2018 release) - Smart speaker with Alexa - Charcoal",
+    "rating": "4.7 out of 5 stars",
+    "http_status": 200,
+    "bytes": 1570167,
+    "sha256": "158b53f30bf827a7a78236558b692df01913e68b7f1408dd7c8af25ea96cdf5d"
+  },
+  "mcp": {
+    "protocol_version": "2026-07-28",
+    "server_version": "0.2.0",
+    "tool": "crawler_run_job",
+    "tool_is_error": false,
+    "job_id": "job_484ce0e91f6e406089f767bd9991a7b8",
+    "lineage_status": "succeeded",
+    "attempts": 2,
+    "retry_history": [
+      {"attempt": 1, "status": "retry_scheduled", "code": "network_error"},
+      {"attempt": 2, "status": "succeeded"}
+    ],
+    "result_count": 1,
+    "title": "Echo Dot (3rd Gen, 2018 release) - Smart speaker with Alexa - Charcoal",
+    "brand": "Amazon",
+    "rating": "4.7 out of 5 stars",
+    "rating_count": 1038091,
+    "http_status": 200,
+    "bytes": 1566570,
+    "sha256": "b540aaea9e410ed2d10e2f3dc2729d6498c16a77c25fadd348b7f9de24372759",
+    "collected_at": "2026-08-31T12:25:33.547766+00:00"
+  },
+  "claims_not_proven": [
+    "public hosted MCP OAuth flow",
+    "multi-instance production deployment",
+    "all-task live parity matrix",
+    "commercial SLA"
+  ]
+}

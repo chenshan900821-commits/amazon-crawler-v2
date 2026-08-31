@@ -1,0 +1,18 @@
+services:
+  crawler:
+    build:
+      context: .
+    env_file:
+      - .env
+    environment:
+      CRAWLER_DB_PATH: /data/crawler.db
+      CRAWLER_EVIDENCE_DIR: /data/evidence
+      CRAWLER_RESULT_JSONL_DIR: /data/result-sinks/jsonl
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - crawler-data:/data
+    restart: unless-stopped
+
+volumes:
+  crawler-data:

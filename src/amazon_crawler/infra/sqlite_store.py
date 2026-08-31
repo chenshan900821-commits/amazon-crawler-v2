@@ -972,6 +972,8 @@ class SQLiteStore:
         if status:
             assignments.extend(["status = ?", "finished_at = ?"])
             values.extend([status, iso()])
+        if status == "succeeded":
+            assignments.extend(["last_error_code = NULL", "last_error = NULL"])
         if last_error:
             assignments.extend(["last_error_code = ?", "last_error = ?"])
             values.extend(last_error)

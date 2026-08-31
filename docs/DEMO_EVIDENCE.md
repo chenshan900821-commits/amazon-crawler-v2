@@ -67,7 +67,7 @@ amazon-crawler doctor
 $operate-amazon-crawler 使用已经连接的 amazon-crawler MCP 工具真实抓取 Amazon US 商品 B07FZ8S74R，邮编 10001，kind=product_time，max_attempts=3。必须先调用 crawler_doctor；配置可用后调用 crawler_run_job。最后报告 job id、终态、结果数、商品标题、品牌、评分、评论数、HTTP 状态、响应字节数、SHA-256、采集时间和 schema。
 ```
 
-当次真实 Agent 原始事件流：[`agent-codex-mcp-success-20260830.typescript`](assets/demos/live/agent-codex-mcp-success-20260830.typescript)。可以在其中搜索以下事件，逐步核对：
+当次真实 Agent 事件流已经移除本机用户名路径和线程标识后公开：[`agent-codex-mcp-success-20260830.typescript`](assets/demos/live/agent-codex-mcp-success-20260830.typescript)。[脱敏前后 SHA-256 与变更范围](assets/demos/live/agent-log-provenance.json)可单独核对；抓取载荷、MCP 调用和结果收据没有修改。可以在事件流中搜索以下事件，逐步核对：
 
 ```text
 "tool":"crawler_doctor"

@@ -6,6 +6,45 @@
 
 > **合规提示：** 本项目仅用于软件架构研究、技术交流和已获授权的数据集成测试，不授予任何人访问、采集、复制、再利用或商业化第三方数据的权利。“技术分享”不等于目标站点授权，也不能免除适用法律、站点条款、隐私规则和知识产权义务。运行前请先阅读[合规与使用声明](#合规与使用声明)。
 
+## 30 秒看懂
+
+你给它一个 Amazon ASIN、站点和配送邮编，它创建可恢复任务、获取授权 Cookie/代理、抓取页面、解析标准字段，并把结果写入 SQLite、JSONL、MySQL、Redis 或 Webhook。页面、CLI、MCP 和 Agent Skill 只是四种入口，底层执行的是同一套任务与断点系统。
+
+**输入：**
+
+```json
+{
+  "kind": "product_time",
+  "asin": "B07FZ8S74R",
+  "marketplace": "US",
+  "postal_code": "10001"
+}
+```
+
+**成功返回应同时满足：**
+
+```json
+{
+  "lineage_status": "succeeded",
+  "result_count": 1,
+  "results": [
+    {
+      "asin": "B07FZ8S74R",
+      "title": "Echo Dot (3rd Gen, 2018 release) - Smart speaker with Alexa - Charcoal",
+      "brand": "Amazon",
+      "rating": "4.7 out of 5 stars",
+      "http_status": 200,
+      "bytes": 1575322,
+      "sha256": "1265777f6af058f61895836991721ab7693f3698805ab4908e5a43c60d263710"
+    }
+  ]
+}
+```
+
+上面是 2026-08-30 已保存真实任务收据的紧凑字段，不是接口约定伪造的成功样例。第一次运行直接跳到[5 分钟拿到第一条结果](#5-分钟拿到第一条结果)；想看 Agent/MCP/Web/CLI 四条真实证据，继续看下一节。
+
+2026-08-31 P0 收尾时又重新验证了两次：Agent Skill 的 Job `job_98079106aa494722b87266bfd436f950` 首次成功；MCP Client 自动启动 Server 后调用 `crawler_run_job`，Job `job_484ce0e91f6e406089f767bd9991a7b8` 首次遇到 `network_error`，指数退避后第 2 次成功，返回 1 条结果、HTTP `200` 和独立响应哈希。见[最新 P0 紧凑收据](docs/assets/demos/live/p0-final-verification-20260831.json)。这证明当前本机链路可用，不代表公网 OAuth、全部任务实时矩阵或商业 SLA 已验收。
+
 ## 这次演示到底是不是真实的
 
 是，但要把证据类型说清楚。2026-08-30 我们重新从四个入口创建了四个独立 Job：真实 Codex Agent 通过 Agent Skill 编排 MCP、MCP STDIO Client、Web 页面和 CLI。四次都请求 Amazon US 商品 `B07FZ8S74R`，都取得了非空结构化结果、HTTP 200、响应字节数和独立 SHA-256。
@@ -44,7 +83,7 @@
 
 可审计材料：
 
-- [真实 Agent 原始事件流](docs/assets/demos/live/agent-codex-mcp-success-20260830.typescript)与[紧凑 JSON 收据](docs/assets/demos/live/agent-mcp-receipt.json)
+- [真实 Agent 脱敏事件流](docs/assets/demos/live/agent-codex-mcp-success-20260830.typescript)、[脱敏前后哈希说明](docs/assets/demos/live/agent-log-provenance.json)与[紧凑 JSON 收据](docs/assets/demos/live/agent-mcp-receipt.json)
 - [MCP 原始终端记录](docs/assets/demos/live/mcp-20260830.typescript)与[紧凑 JSON 收据](docs/assets/demos/live/mcp-client-receipt.json)
 - [Web 操作截图与 JSON 收据](docs/assets/demos/live/web-receipt.json)
 - [CLI 原始终端记录](docs/assets/demos/live/cli-20260830.typescript)与[紧凑 JSON 收据](docs/assets/demos/live/cli-receipt.json)
@@ -69,6 +108,15 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install .
 ```
+
+需要复现本仓库 P0 验证环境时，使用已经提交的精确依赖快照，再安装本项目本身：
+
+```bash
+python -m pip install -r requirements.lock
+python -m pip install --no-deps .
+```
+
+`requirements.lock` 是 P0 验证环境快照；日常开发和跨 Python 版本 CI 仍以 `pyproject.toml` 的兼容范围为准。
 
 ### 2. 准备并加载配置
 
@@ -199,6 +247,36 @@ SQLite 标准结果保存在 `.data/crawler.db`；选择 `jsonl` 结果去向后
 
 在前台进程中按 `Ctrl+C` 安全停止。再次打开终端后，重新加载 `.env`，然后运行 `amazon-crawler serve` 或 `amazon-crawler worker`。任务状态和断点保存在 SQLite 中；Worker 会恢复可继续处理的任务，不要求浏览器保持打开。
 
+### 6. 单机容器运行
+
+准备好本机 `.env` 后，可以不安装 Python，直接启动页面、API 和 Worker：
+
+```bash
+docker compose up --build -d
+curl http://127.0.0.1:3000/api/v1/health
+```
+
+服务只映射到本机 `127.0.0.1:3000`，任务、断点、证据和 JSONL 结果保存在 `crawler-data` volume。普通 HTTP 管理面没有登录，不要把该端口直接暴露到公网。查看日志和停止：
+
+```bash
+docker compose logs -f crawler
+docker compose down
+```
+
+`docker compose down` 不删除数据卷；如需处理数据卷，先备份并明确确认目标，不要直接执行带 `-v` 的删除命令。
+
+### 7. 备份 SQLite
+
+运行中的数据库使用 SQLite 在线备份接口，不要直接复制正在写入的 `.db` 文件：
+
+```bash
+python scripts/backup_sqlite.py \
+  --db .data/crawler.db \
+  --output-dir .data/backups
+```
+
+命令会执行完整性检查，并在备份旁生成包含大小、SHA-256 和时间的 JSON 清单。恢复前先停止服务，把备份复制到一个新路径并执行 `PRAGMA integrity_check`；确认可读后再把 `CRAWLER_DB_PATH` 指向新文件，原数据库应保留到恢复验收完成。
+
 ## 主要运行方式
 
 | 方式 | 启动命令 | 谁创建任务 | 适用场景 |
@@ -267,7 +345,7 @@ crawler_doctor
 
 最终 Job `job_b32ad252512649999fed195f8b93d3eb` 为 `succeeded`，1 次尝试得到 1 条结果；商品为 Echo Dot，品牌 Amazon，评分 `4.7 out of 5 stars`，评论数 `(1,038,112)`；HTTP `200`，响应 `1,575,322` 字节，SHA-256 为 `1265777f6af058f61895836991721ab7693f3698805ab4908e5a43c60d263710`。Agent 随后通过 MCP 二次读取 Job 和 SQLite 标准结果，不是只相信创建回执。
 
-[查看原始 Agent 事件流](docs/assets/demos/live/agent-codex-mcp-success-20260830.typescript) · [查看紧凑 JSON 收据](docs/assets/demos/live/agent-mcp-receipt.json) · [查看完整复现步骤](docs/DEMO_EVIDENCE.md#1-codex-agent--agent-skill--mcp)
+[查看真实 Agent 脱敏事件流](docs/assets/demos/live/agent-codex-mcp-success-20260830.typescript) · [查看脱敏前后哈希](docs/assets/demos/live/agent-log-provenance.json) · [查看紧凑 JSON 收据](docs/assets/demos/live/agent-mcp-receipt.json) · [查看完整复现步骤](docs/DEMO_EVIDENCE.md#1-codex-agent--agent-skill--mcp)
 
 MCP 不可用时，Skill 才使用确定性后备脚本。可以单独验证后备路径，但这不等价于“Agent 已通过 MCP”：
 
@@ -299,11 +377,13 @@ MCP 层直接复用同一个 Application Service、SQLite 状态库、Worker 和
 
 ### 本机验证：Client 自动启动 Server
 
-先按[准备并加载配置](#2-准备并加载配置)把 `.env` 加载到当前终端。以下命令会启动一个子进程 MCP Server、完成协议握手、列出工具，并实际调用 `crawler_doctor` 和 `crawler_capabilities`；不需要先运行页面、API 或 Worker：
+以下安全启动器会读取项目根目录 `.env` 中的 `CRAWLER_*`，但不会把 `.env` 当 Shell 执行。它随后启动一个子进程 MCP Server、完成协议握手、列出工具，并实际调用 `crawler_doctor` 和 `crawler_capabilities`；不需要先运行页面、API 或 Worker：
 
 ```bash
-amazon-crawler-mcp-client smoke
+python scripts/run_mcp_client.py smoke
 ```
+
+如果你已经按[准备并加载配置](#2-准备并加载配置)把 `.env` 加载进当前终端，也可以直接执行 `amazon-crawler-mcp-client smoke`。两条命令连接的是同一个 STDIO Server；安全启动器只是减少“忘记加载配置”的常见错误。
 
 成功结果必须同时满足：
 
@@ -945,6 +1025,29 @@ CRAWLER_COOKIE_OPERATIONS_API_ENABLED=true
 
 Cookie 获取属于人工运维权限，不属于抓取任务输入，也没有加入仓库中的 AI Agent Skill。当前 HTTP 服务没有登录和租户授权，因此即使开启了该开关，也只能绑定本机或放在具备认证、授权、审计和限流的内部控制面之后，不能直接暴露到公网。
 
+## P0 开发验收
+
+P0 的完成口径是“当前项目可以被安装、启动、操作、恢复、观测和审计”，不是“所有外部生产资源与商业 SLA 已经验收”。当前已经具备：
+
+- 11 类旧任务契约、断点续爬、有限重试、指数退避、上游熔断和任务幂等；
+- Web、CLI、MCP Server/Client 和 Agent Skill 共用同一应用服务；
+- SQLite 标准结果、JSONL/MySQL/Redis/Webhook 可靠投递与在线备份；
+- MCP scope、租户隔离、限流、并发闸门、分页、输出字节限制、内部指标/审计/告警；
+- 精确依赖快照、wheel 构建、单机容器定义、GitHub CI、依赖更新和公开材料秘密扫描；
+- 2026-08-31 重新完成 Agent Skill 与 MCP 真实抓取，结果见[最新 P0 收据](docs/assets/demos/live/p0-final-verification-20260831.json)。
+
+发布前门禁：
+
+```bash
+PYTHONPATH=src:. python -m unittest discover -s tests -q
+PYTHONPATH=src:. python scripts/audit_public_artifacts.py
+PYTHONPATH=src:. python scripts/verify_parity_manifest.py
+python scripts/run_mcp_client.py smoke
+python -m pip check
+```
+
+`verify_parity_manifest.py` 不带 `--require-complete` 只检查 11 类任务契约和证据结构。全量旧系统迁移的最终门禁仍是 `--require-complete`；它当前会因 Cookie 生产外部收据和 33 场景实时矩阵不足而失败。这一失败必须保留，不能为了宣布 P0 而改成假成功。公网 Auth0 登录、A2A、多实例共享状态和商业 SLA 也不属于本次 P0 完成声明。
+
 ## 开发与测试
 
 运行完整单元测试：
@@ -958,7 +1061,7 @@ PYTHONPATH=src:. python -m unittest discover -s tests -v
 ```bash
 python -m compileall -q src
 amazon-crawler capabilities
-amazon-crawler-mcp-client smoke
+python scripts/run_mcp_client.py smoke
 node --check src/amazon_crawler/interfaces/static/app.js
 ```
 
@@ -1025,4 +1128,4 @@ amazon-crawler-v2/
 
 ## 许可证
 
-本仓库当前未声明开源许可证。未经仓库所有者许可，不应复制、再分发或将代码用于其他商业项目。
+本仓库采用[源码可见、仅查看与评估许可](LICENSE)，不是开源许可证。未经版权所有者书面许可，不得复制、修改、再分发、作为服务运营或用于商业产品；该许可也不授予任何第三方数据访问或使用权。

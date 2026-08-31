@@ -1,0 +1,13 @@
+{
+  "artifact": "agent-codex-mcp-success-20260830.typescript",
+  "evidence_kind": "sanitized_real_agent_event_stream",
+  "original_private_sha256": "fea2d205bdcfb65d01b4fd22681b1eb80cea2130e3b0e01b7078bcb1223a9de3",
+  "published_sha256": "5dee8079689adba57bd6dcb04ac787884af09481acd248a32752a2a8e60a38ce",
+  "transformations": [
+    "replaced the local Codex thread identifier with thread_redacted",
+    "replaced the local Codex memory path with [CODEX_MEMORY]/MEMORY.md"
+  ],
+  "crawl_payload_changed": false,
+  "mcp_tool_calls_changed": false,
+  "result_receipt_changed": false
+}

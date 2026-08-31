@@ -320,6 +320,32 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
         self.store.complete_item(new_claim, CrawlResult(data={"title": "fresh"}))
         self.assertEqual(self.store.get_job(job["id"])["status"], "succeeded")
 
+    async def test_successful_retry_clears_the_job_level_transient_error(self) -> None:
+        job, _ = self.service.create_job(
+            inputs=["B000000001"], marketplace_id="US", max_attempts=2
+        )
+        first_claim = self.store.claim_next("retry-worker", 15)
+        self.assertIsNotNone(first_claim)
+        self.store.fail_item(
+            first_claim,
+            code="network_error",
+            message="temporary upstream failure",
+            retryable=True,
+        )
+        with self.store._connect() as connection:
+            connection.execute(
+                "UPDATE job_items SET available_at = ? WHERE id = ?",
+                ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), first_claim.id),
+            )
+        retry_claim = self.store.claim_next("retry-worker", 15)
+        self.assertIsNotNone(retry_claim)
+        self.store.complete_item(retry_claim, CrawlResult(data={"title": "fresh"}))
+
+        completed = self.store.get_job(job["id"])
+        self.assertEqual(completed["status"], "succeeded")
+        self.assertIsNone(completed["last_error_code"])
+        self.assertIsNone(completed["last_error"])
+
     async def test_pause_resume_and_idempotent_creation(self) -> None:
         first, first_created = self.service.create_job(
             inputs=["B000000001", "B000000002"], marketplace_id="US"
